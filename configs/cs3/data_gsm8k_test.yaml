@@ -2,7 +2,7 @@ setup:
   data:
     source: "openai/gsm8k"
     type: "huggingface"
-    subset: "main"
+    name: "main"
     split: "test"
     cache_dir: "./hf_cache"
   mode: "finetuning"
@@ -10,8 +10,7 @@ setup:
   processes: 1
 
 processing:
-  # use a tokenizer available to you; keep whatever you were using if it works
-  huggingface_tokenizer: "baseten/Meta-Llama-3-tokenizer"
+  huggingface_tokenizer: "meta-llama/Meta-Llama-3.1-8B-Instruct"
   max_seq_length: 2048
 
   read_hook: "phoenix_task_hooks:gsm8k_prompt_completion_read_hook"
