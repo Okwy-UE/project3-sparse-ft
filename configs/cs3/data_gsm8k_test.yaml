@@ -1,0 +1,18 @@
+setup:
+  data:
+    type: "huggingface"
+    source: "openai/gsm8k"
+    subset: "main"
+    split: "test"
+  mode: "finetuning"
+  output_dir: "data/gsm8k_train"
+  processes: 1
+
+processing:
+  tokenizer_params:
+    pretrained_model_name_or_path: "baseten/Meta-Llama-3-tokenizer"
+  write_in_batch: True
+  # You will implement this hook in Week 2 (below)
+  read_hook: "phoenix_task_hooks:gsm8k_prompt_completion_hook"
+  read_hook_kwargs: {}
+  use_ftfy: True
