@@ -2,8 +2,8 @@ setup:
   data:
     source: "openai/gsm8k"
     type: "huggingface"
-    subset: "main"
-    # split: "train"
+    # subset: "main"
+    split: "train"
     cache_dir: "./hf_cache"
   mode: "finetuning"
   output_dir: "data/gsm8k_train"
