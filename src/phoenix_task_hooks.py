@@ -1,15 +1,15 @@
 def gsm8k_prompt_completion_read_hook(x, data_keys=None, **kwargs):
-    if data_keys == None:    
-        data_keys = ["question", "answer"]
+    if data_keys is None:
+        data_keys = {
+            "question_key": "question",
+            "answer_key": "answer"}
     q = x[data_keys["question_key"]].strip()
     a = x[data_keys["answer_key"]].strip()
     prompt = f"Question: {q}\nAnswer:"
     completion = f" {a}"
-    # Semantic Data Array: list of turns with type + content
     return [
         {"type": "prompt", "content": [{"text": prompt}]},
-        {"type": "completion", "content": [{"text": completion}]},
-    ]
+        {"type": "completion", "content": [{"text": completion}]}]
 
 def boolq_prompt_completion_hook(x, **kwargs):
     passage = x["passage"].strip()
