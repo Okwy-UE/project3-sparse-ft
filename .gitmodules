@@ -1,0 +1,3 @@
+[submodule "external/phoenix"]
+	path = external/phoenix
+	url = https://github.com/Picomp-lab/Phoenix.git
