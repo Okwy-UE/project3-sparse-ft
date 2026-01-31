@@ -1,0 +1,37 @@
+
+# Python / venv
+
+__pycache__/
+
+*.pyc
+
+.venv/
+
+venv*/
+
+*.egg-info/
+
+
+
+# Data + runs (keep out of git; store elsewhere or selectively copy summaries)
+
+data/
+
+results/runs/
+
+model_dir*/
+
+checkpoints/
+
+*.safetensors
+
+*.pt
+
+*.bin
+
+
+
+# Logs (prefer storing under results/runs/, which is ignored)
+
+*.log
+
