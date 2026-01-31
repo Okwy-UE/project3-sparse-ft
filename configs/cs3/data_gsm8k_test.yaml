@@ -1,18 +1,27 @@
 setup:
   data:
-    type: "huggingface"
     source: "openai/gsm8k"
+    type: "huggingface"
     subset: "main"
     split: "test"
+    cache_dir: "./hf_cache"
   mode: "finetuning"
   output_dir: "data/gsm8k_train"
   processes: 1
 
 processing:
-  tokenizer_params:
-    pretrained_model_name_or_path: "baseten/Meta-Llama-3-tokenizer"
-  write_in_batch: True
-  # You will implement this hook in Week 2 (below)
-  read_hook: "phoenix_task_hooks:gsm8k_prompt_completion_hook"
-  read_hook_kwargs: {}
+  # use a tokenizer available to you; keep whatever you were using if it works
+  huggingface_tokenizer: "baseten/Meta-Llama-3-tokenizer"
+  max_seq_length: 2048
+
+  read_hook: "phoenix_task_hooks:gsm8k_prompt_completion_read_hook"
+  read_hook_kwargs:
+    question_key: "question"
+    answer_key: "answer"
+
   use_ftfy: True
+  ftfy_normalizer: "NFC"
+
+dataset:
+  pack_sequences: True
+  use_vsl: False
