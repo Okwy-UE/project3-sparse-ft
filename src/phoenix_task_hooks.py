@@ -1,4 +1,6 @@
-def gsm8k_prompt_completion_read_hook(x, data_keys, **kwargs):
+def gsm8k_prompt_completion_read_hook(x, data_keys=None, **kwargs):
+    if data_keys == None:    
+        data_keys = ["question", "answer"]
     q = x[data_keys["question_key"]].strip()
     a = x[data_keys["answer_key"]].strip()
     prompt = f"Question: {q}\nAnswer:"
