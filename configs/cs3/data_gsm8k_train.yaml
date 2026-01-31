@@ -10,7 +10,7 @@ setup:
   processes: 1
 
 processing:
-  huggingface_tokenizer: "baseten/Meta-Llama-3-tokenizer"
+  huggingface_tokenizer: "meta-llama/Meta-Llama-3.1-8B-Instruct"
   max_seq_length: 2048
 
   read_hook: "phoenix_task_hooks:gsm8k_prompt_completion_read_hook"
