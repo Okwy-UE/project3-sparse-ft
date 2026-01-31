@@ -2,7 +2,7 @@ setup:
   data:
     source: "openai/gsm8k"
     type: "huggingface"
-    config: "main"
+    # config: "main"
     split: "train"
     cache_dir: "./hf_cache"
   mode: "finetuning"
