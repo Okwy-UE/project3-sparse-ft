@@ -1,17 +1,14 @@
 import argparse
-import copy
 import os
 from pathlib import Path
 
 import yaml
 
-def deep_set(d, keys, value):
-    cur = d
-    for k in keys[:-1]:
-        if k not in cur or cur[k] is None:
-            cur[k] = {}
-        cur = cur[k]
-    cur[keys[-1]] = value
+def _first_present(d: dict, keys: list[str]) -> str | None:
+    for k in keys:
+        if isinstance(d, dict) and k in d:
+            return k
+    return None
 
 def main():
     ap = argparse.ArgumentParser()
@@ -70,7 +67,7 @@ def main():
         cfg["runconfig"] = {}
     cfg["runconfig"]["max_steps"] = args.max_steps
     cfg["runconfig"]["eval_steps"] = args.eval_steps
-    cfg["runconfig"]["save_steps"] = args.save_steps
+    cfg["runconfig"]["checkpoint_steps"] = args.save_steps
 
     # 4) Optimizer LR
     if "optimizer" not in cfg:
@@ -80,17 +77,23 @@ def main():
     else:
         cfg["optimizer"]["learning_rate"] = args.lr
 
-    # 5) Batch (Model Zoo sometimes uses train_input.batch_size or runconfig.global_batch_size)
-    if "batch_size" in cfg["train_input"]:
-        cfg["train_input"]["batch_size"] = args.global_batch
-    else:
-        cfg["runconfig"]["global_batch_size"] = args.global_batch
+    # 5) Batch size MUST be configured under the input block for this schema
+    # Prefer updating an existing batch key to avoid violating any strict input schemas.
+    if "train_input" not in cfg:
+        cfg["train_input"] = {}
+    batch_key = _first_present(cfg["train_input"], ["batch_size", "batch_size_per_csx", "micro_batch_size"])
+    if batch_key is None:
+        batch_key = "batch_size"
+    cfg["train_input"][batch_key] = args.global_batch
 
     # 6) LoRA block (based on Cerebras LoraConfig fields: r/alpha/dropout/target_modules). :contentReference[oaicite:13]{index=13}
     # The exact insertion point can vary by model; we place under cfg["model"]["lora"].
     if "model" not in cfg:
         cfg["model"] = {}
-    cfg["model"]["lora"] = {
+    lora_key = _first_present(cfg["model"], ["lora", "lora_config", "lora_params"])
+    if lora_key is None:
+        lora_key = "lora"
+    cfg["model"][lora_key] = {
         "r": args.lora_r,
         "alpha": args.lora_alpha,
         "dropout": args.lora_dropout,
@@ -99,18 +102,6 @@ def main():
         # Keep unmerged during training; Week-3 will handle sparsity-aware merge.
         "merge_weights": False,
     }
-
-    # Tagging
-    cfg.setdefault("metadata", {})
-    cfg["metadata"].update(
-        {
-            "project": "project3-sparse-ft",
-            "week": 2,
-            "method": "dense_lora",
-            "model": args.model_name,
-            "task": args.task,
-        }
-    )
 
     Path(os.path.dirname(args.out_yaml)).mkdir(parents=True, exist_ok=True)
     with open(args.out_yaml, "w", encoding="utf-8") as f:
