@@ -1,15 +1,12 @@
 setup:
   mode: "finetuning"
+  input_dir: "__INPUT_DIR__"     # directory containing *.jsonl
   output_dir: "__OUTPUT_DIR__"
   processes: 8
-  data:
-    source: "__JSONL_PATH__"
-    format: "jsonl"
 
 processing:
   huggingface_tokenizer: "__TOKENIZER__"
   max_seq_length: __MSL__
-
   read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:prompt_completion_text_read_hook"
   read_hook_kwargs:
     prompt_key: "prompt"
@@ -18,3 +15,4 @@ processing:
 
 dataset:
   pack_sequences: true
+  
