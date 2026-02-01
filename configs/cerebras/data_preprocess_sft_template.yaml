@@ -1,6 +1,8 @@
 setup:
+  data:
+    type: "local"
+    source: "__INPUT_DIR__"   # directory containing *.jsonl (or a tmp dir with a symlink)
   mode: "finetuning"
-  input_dir: "__INPUT_DIR__"     # directory containing *.jsonl
   output_dir: "__OUTPUT_DIR__"
   processes: 8
 
@@ -12,7 +14,7 @@ processing:
     prompt_key: "prompt"
     completion_key: "completion"
   shuffle: true
+  shuffle_seed: 13
 
 dataset:
   pack_sequences: true
-  
