@@ -1,0 +1,20 @@
+setup:
+  mode: "finetuning"
+  output_dir: "__OUTPUT_DIR__"
+  processes: 8
+  data:
+    source: "__JSONL_DIR__"
+    format: "jsonl"
+
+processing:
+  # Tokenizer must match model family (llama3 / mistral / mixtral tokenizers).
+  tokenizer:
+    type: "huggingface"
+    pretrained_model_name_or_path: "__TOKENIZER__"
+  max_seq_length: __MSL__
+  # Expect fields: prompt, completion
+  read_hook: "prompt_completion_text_read_hook"
+  pack_sequences: true
+
+dataset:
+  shuffle: true
