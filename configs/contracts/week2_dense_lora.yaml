@@ -1,0 +1,108 @@
+week: 2
+goal: "Dense LoRA SFT baselines on CS-3 (Phoenix-compatible): Llama-3-8B, Mistral-7B-v3, Mixtral-8x7B; tasks BoolQ/HellaSwag/GSM8K."
+
+# Canonical model IDs (keep stable across week-2)
+models:
+  llama3_8b:
+    family: llama
+    hf_id: "meta-llama/Meta-Llama-3-8B"
+  mistral_7b_v3:
+    family: mistral
+    hf_id: "mistralai/Mistral-7B-v0.3"
+  mixtral_8x7b:
+    family: mixtral
+    hf_id: "mistralai/Mixtral-8x7B-v0.1"
+
+tasks:
+  - name: boolq
+    metric: accuracy
+  - name: hellaswag
+    metric: accuracy
+  - name: gsm8k
+    metric: exact_match
+
+finetune_style:
+  method: dense_lora
+  objective: sft_prompt_completion
+  single_task_runs: true
+  sparsity: 0
+
+# Lock prompt formats now (versioned)
+prompt_templates:
+  version: "v1"
+  boolq: |
+    Passage:
+    {passage}
+
+    Question: {question}
+    Answer (yes/no):
+  hellaswag: |
+    Context:
+    {context}
+
+    Choose the best continuation:
+    A) {ending_a}
+    B) {ending_b}
+    C) {ending_c}
+    D) {ending_d}
+
+    Answer (A/B/C/D):
+  gsm8k: |
+    Problem:
+    {question}
+
+    Final answer (number only):
+
+# Determinism contract
+randomness:
+  seed: 1337
+  gsm8k_val_frac: 0.10
+  gsm8k_val_split_method: "deterministic_hash"
+
+# Baseline table schema (what every run must emit)
+run_artifacts_required:
+  - config.yaml
+  - command.txt
+  - env.txt
+  - stdout.log
+  - metrics.json
+  - eval.json
+  - checkpoint_export_manifest.json
+
+baseline_table_fields:
+  - run_id
+  - date
+  - hardware
+  - model
+  - task
+  - method
+  - max_seq_len
+  - global_batch
+  - micro_batch
+  - grad_accum
+  - tokens_per_sec
+  - steps
+  - best_val_metric
+  - final_val_metric
+  - quality_metric
+  - notes
+
+# Training knobs you will fill in once, then keep fixed for week-2
+training_defaults:
+  max_seq_len: 2048
+  # global_batch = micro_batch * grad_accum * num_csx (if data-parallel)
+  micro_batch: 1
+  grad_accum: 16
+  num_csx: 1
+  lr: 2.0e-4
+  warmup_steps: 100
+  weight_decay: 0.0
+  max_steps: 2000
+  eval_every_steps: 200
+  save_every_steps: 200
+
+lora:
+  rank: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules: "attention_and_mlp"  # keep as a label; map to modelzoo keys later
