@@ -14,7 +14,7 @@ processing:
   max_seq_length: __MSL__
   # Expect fields: prompt, completion
   read_hook: "prompt_completion_text_read_hook"
+  shuffle: true
 
 dataset:
-  shuffle: true
   pack_sequences: true
