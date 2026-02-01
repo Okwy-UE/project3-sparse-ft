@@ -7,7 +7,7 @@ TOKENIZER="${4:?hf tokenizer id}"
 MSL="${5:-2048}"
 
 # Template path (must exist)
-TEMPLATE="configs/cerebras/preprocess/template_sft_prompt_completion.yaml"
+TEMPLATE="configs/cerebras/data_preprocess_sft_template.yaml"
 # If your repo uses a different template path, update TEMPLATE above accordingly.
 
 GEN_DIR="configs/cerebras/preprocess/generated"
