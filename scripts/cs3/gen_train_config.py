@@ -100,6 +100,8 @@ def main():
         if isinstance(loop, dict):
             loop["max_steps"] = args.max_steps
             loop["eval_steps"] = args.eval_steps
+            if "eval_frequency" in loop:
+                loop["eval_frequency"] = args.eval_steps
             _set(cfg, ["trainer", "init", "loop"], loop)
 
         ckpt = _get(cfg, ["trainer", "init", "checkpoint"], {})
@@ -120,17 +122,38 @@ def main():
         if isinstance(opt, dict) and "Adam" in opt and isinstance(opt["Adam"], dict):
             opt["Adam"].pop("correct_bias", None)
 
-        # 5) LoRA: MUST be injected under trainer.init.model (top-level model block is ignored here)
-        model = _get(cfg, ["trainer", "init", "model"], {})
-        if isinstance(model, dict):
-            model["lora"] = {
-                "r": int(args.lora_r),
-                "alpha": int(args.lora_alpha),
-                "dropout": float(args.lora_dropout),
-                "target_modules": ["Linear"],  # safest initial target; widen later if needed
-                "merge_weights": False,
+        # 5) LoRA: for Trainer configs, enable via the Lora callback (NOT model config field).
+        # Callback signature: Lora(lora_params=...) :contentReference[oaicite:1]{index=1}
+        callbacks = _get(cfg, ["trainer", "init", "callbacks"], [])
+        if callbacks is None:
+            callbacks = []
+        if not isinstance(callbacks, list):
+            callbacks = [callbacks]
+
+        lora_cb = {
+            "Lora": {
+                "lora_params": {
+                    "r": int(args.lora_r),
+                    "alpha": int(args.lora_alpha),
+                    "dropout": float(args.lora_dropout),
+                    # safest initial target; tighten later once you confirm module naming
+                    "target_modules": ["Linear"],
+                    "merge_weights": False,
+                }
             }
-            _set(cfg, ["trainer", "init", "model"], model)
+        }
+
+        # Insert LoRA after LoadCheckpointStates if present (keeps your fine-tune semantics tidy)
+        inserted = False
+        for i, cb in enumerate(callbacks):
+            if isinstance(cb, dict) and "LoadCheckpointStates" in cb:
+                callbacks.insert(i + 1, lora_cb)
+                inserted = True
+                break
+        if not inserted:
+            callbacks.append(lora_cb)
+
+        _set(cfg, ["trainer", "init", "callbacks"], callbacks)
 
         # 6) Sequence length: set max_position_embeddings if present
         model = _get(cfg, ["trainer", "init", "model"], None)
