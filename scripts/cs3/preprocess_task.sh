@@ -1,26 +1,42 @@
 set -euo pipefail
 
-TAG="${1:?tag like llama3-boolq-train}"
-JSONL_PATH="${2:?path to jsonl file, e.g. data/sft/boolq/train.jsonl}"
-OUT_DIR="${3:?e.g. data/cs_hdf5/llama3/boolq/train}"
-TOKENIZER="${4:?e.g. meta-llama/Meta-Llama-3-8B}"
+TAG="${1:?tag (e.g., mistral-boolq-train)}"
+INPUT="${2:?input dir OR jsonl file}"
+OUT_DIR="${3:?output dir}"
+TOKENIZER="${4:?hf tokenizer id}"
 MSL="${5:-2048}"
 
-TEMPLATE="configs/cerebras/data_preprocess_sft_template.yaml"
+# Template path (must exist)
+TEMPLATE="configs/cerebras/preprocess/template_sft_prompt_completion.yaml"
+# If your repo uses a different template path, update TEMPLATE above accordingly.
 
-# Persist rendered configs for reproducibility
 GEN_DIR="configs/cerebras/preprocess/generated"
 mkdir -p "$GEN_DIR"
-CFG_OUT="$GEN_DIR/${TAG}.yaml"
+CFG="${GEN_DIR}/${TAG}.yaml"
+
+TMPDIR=""
+INPUT_DIR="$INPUT"
+
+if [ -f "$INPUT" ]; then
+  TMPDIR="$(mktemp -d /tmp/csdp_${TAG}.XXXX)"
+  ln -sf "$(realpath "$INPUT")" "${TMPDIR}/data.jsonl"
+  INPUT_DIR="$TMPDIR"
+fi
+
+mkdir -p "$OUT_DIR"
 
 sed \
-  -e "s|__JSONL_PATH__|${JSONL_PATH}|g" \
+  -e "s|__INPUT_DIR__|${INPUT_DIR}|g" \
   -e "s|__OUTPUT_DIR__|${OUT_DIR}|g" \
   -e "s|__TOKENIZER__|${TOKENIZER}|g" \
   -e "s|__MSL__|${MSL}|g" \
-  "$TEMPLATE" > "$CFG_OUT"
+  "$TEMPLATE" > "$CFG"
 
-echo "[INFO] Using config: $CFG_OUT"
-cszoo data_preprocess run --config "$CFG_OUT"
+echo "[INFO] Using config: $CFG"
+cszoo data_preprocess run --config "$CFG"
 
-echo "[OK] Preprocessed: ${TAG} -> ${OUT_DIR}"
+if [ -n "$TMPDIR" ]; then
+  rm -rf "$TMPDIR"
+fi
+
+echo "[OK] Preprocessed -> ${OUT_DIR}"
