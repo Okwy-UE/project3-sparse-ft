@@ -1,0 +1,68 @@
+{
+  "contract_path": "configs/contracts/week2_dense_lora.yaml",
+  "prompt_template_version": "v1",
+  "datasets": {
+    "boolq": {
+      "source": "super_glue/boolq",
+      "splits": {
+        "train": {
+          "path": "data/sft/boolq/train.jsonl",
+          "count": 9427,
+          "sha256": "d52d8b029d41f8f170d967b7c86ea6323b39a3ed7846d619069b6dbf14620d1e"
+        },
+        "val": {
+          "path": "data/sft/boolq/val.jsonl",
+          "count": 3270,
+          "sha256": "51693e98409a5973f21c6f3a33d5812085e684703548e04646f8a0bcd7c205f0"
+        }
+      }
+    },
+    "hellaswag": {
+      "source": "hellaswag",
+      "splits": {
+        "train": {
+          "path": "data/sft/hellaswag/train.jsonl",
+          "count": 39905,
+          "sha256": "8c63b67425381576554d363a3b032a6af609f90538ec67e395325ce3386d3153"
+        },
+        "val": {
+          "path": "data/sft/hellaswag/val.jsonl",
+          "count": 10042,
+          "sha256": "66d7ad44a314f40396cb92418910bf5bfae4690218e1606dc6884ca2123f0b18"
+        }
+      }
+    },
+    "gsm8k": {
+      "source": "gsm8k/main",
+      "val_policy": {
+        "method": "deterministic_hash",
+        "val_frac": 0.1,
+        "seed": 1337
+      },
+      "splits": {
+        "train": {
+          "path": "data/sft/gsm8k/train.jsonl",
+          "count": 6734,
+          "sha256": "7bdd4db2af4f9017cf3b781a076b5733f5750ba3a4df6145b464a0bc904b28fd"
+        },
+        "val": {
+          "path": "data/sft/gsm8k/val.jsonl",
+          "count": 739,
+          "sha256": "4923162ba7721e67523ca018f595ff7713222a10100f813976b320b1cd173635"
+        },
+        "test": {
+          "path": "data/sft/gsm8k/test.jsonl",
+          "count": 1319,
+          "sha256": "f74a24cb492122f1e9ad8c5620b112e4a06356c1cb79206b905067488d2644fb"
+        }
+      }
+    }
+  },
+  "builder": {
+    "script": "src/data/build_week2_sft.py"
+  },
+  "versions": {
+    "datasets": "2.19.1",
+    "transformers": "4.45.2"
+  }
+}
