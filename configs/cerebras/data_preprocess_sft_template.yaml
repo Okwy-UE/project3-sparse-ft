@@ -14,6 +14,9 @@ processing:
   max_seq_length: __MSL__
   # Expect fields: prompt, completion
   read_hook: "prompt_completion_text_read_hook"
+  read_hook_kwargs:
+    prompt_key: "prompt"
+    completion_key: "completion"
   shuffle: true
 
 dataset:
