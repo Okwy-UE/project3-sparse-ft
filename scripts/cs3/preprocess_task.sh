@@ -1,22 +1,26 @@
 set -euo pipefail
 
-TASK="${1:?boolq|hellaswag|gsm8k}"
-JSONL_DIR="${2:?e.g., $HOME/project3-sparse-ft/data/sft/boolq}"
-OUT_DIR="${3:?e.g., $HOME/project3-sparse-ft/data/cs_hdf5/boolq}"
-TOKENIZER="${4:?e.g., meta-llama/Meta-Llama-3-8B}"
+TAG="${1:?tag like llama3-boolq-train}"
+JSONL_PATH="${2:?path to jsonl file, e.g. data/sft/boolq/train.jsonl}"
+OUT_DIR="${3:?e.g. data/cs_hdf5/llama3/boolq/train}"
+TOKENIZER="${4:?e.g. meta-llama/Meta-Llama-3-8B}"
 MSL="${5:-2048}"
 
 TEMPLATE="configs/cerebras/data_preprocess_sft_template.yaml"
-CFG_TMP="$(mktemp /tmp/data_preprocess_${TASK}.XXXX.yaml)"
+
+# Persist rendered configs for reproducibility
+GEN_DIR="configs/cerebras/preprocess/generated"
+mkdir -p "$GEN_DIR"
+CFG_OUT="$GEN_DIR/${TAG}.yaml"
 
 sed \
-  -e "s|__JSONL_DIR__|${JSONL_DIR}|g" \
+  -e "s|__JSONL_PATH__|${JSONL_PATH}|g" \
   -e "s|__OUTPUT_DIR__|${OUT_DIR}|g" \
   -e "s|__TOKENIZER__|${TOKENIZER}|g" \
   -e "s|__MSL__|${MSL}|g" \
-  "$TEMPLATE" > "$CFG_TMP"
+  "$TEMPLATE" > "$CFG_OUT"
 
-echo "[INFO] Using config: $CFG_TMP"
-cszoo data_preprocess run --config "$CFG_TMP"
+echo "[INFO] Using config: $CFG_OUT"
+cszoo data_preprocess run --config "$CFG_OUT"
 
-echo "[OK] Preprocessed: $TASK -> $OUT_DIR"
+echo "[OK] Preprocessed: ${TAG} -> ${OUT_DIR}"
