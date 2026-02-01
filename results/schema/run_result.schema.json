@@ -1,1 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RunResult",
+  "type": "object",
+  "required": ["run_id", "timestamp", "platform", "model", "task", "method", "train", "artifacts"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "timestamp": { "type": "string" },
 
+    "platform": {
+      "type": "object",
+      "required": ["hardware", "system"],
+      "properties": {
+        "hardware": { "type": "string", "enum": ["cs3", "v100", "h100"] },
+        "system": { "type": "string" },
+        "num_csx": { "type": "integer" }
+      }
+    },
+
+    "model": {
+      "type": "object",
+      "required": ["family", "variant"],
+      "properties": {
+        "family": { "type": "string" },
+        "variant": { "type": "string" },
+        "params_b": { "type": "number" }
+      }
+    },
+
+    "task": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "dataset": { "type": "string" },
+        "split": { "type": "string" }
+      }
+    },
+
+    "method": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "enum": ["dense", "dense_lora", "sparse_lora", "sparse_full"] },
+        "sparsity": { "type": "number" },
+        "lora": {
+          "type": "object",
+          "properties": {
+            "r": { "type": "integer" },
+            "alpha": { "type": "integer" },
+            "dropout": { "type": "number" },
+            "target_modules": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+
+    "train": {
+      "type": "object",
+      "properties": {
+        "global_batch_size": { "type": "integer" },
+        "micro_batch_size": { "type": ["integer", "string"] },
+        "grad_accum_steps": { "type": "integer" },
+        "seq_len": { "type": "integer" },
+        "max_steps": { "type": "integer" },
+        "lr": { "type": "number" },
+        "precision": { "type": "string" }
+      }
+    },
+
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "final": { "type": "object" },
+        "best": { "type": "object" }
+      }
+    },
+
+    "throughput": {
+      "type": "object",
+      "properties": {
+        "samples_per_sec": { "type": "number" },
+        "tokens_per_sec": { "type": "number" },
+        "step_time_sec": { "type": "number" }
+      }
+    },
+
+    "artifacts": {
+      "type": "object",
+      "required": ["config_path", "model_dir", "log_path"],
+      "properties": {
+        "config_path": { "type": "string" },
+        "stats_path": { "type": "string" },
+        "model_dir": { "type": "string" },
+        "log_path": { "type": "string" },
+        "eval_path": { "type": "string" }
+      }
+    }
+  }
+}
