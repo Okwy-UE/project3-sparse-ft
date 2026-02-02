@@ -1,7 +1,7 @@
 trainer:
   fit:
     train_dataloader:
-      batch_size: 4
+      batch_size: 16
       data_dir: /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/llama3/hellaswag/train
       data_processor: GptHDF5MapDataProcessor
       num_workers: 8
@@ -11,7 +11,7 @@ trainer:
       shuffle_seed: 1337
     val_dataloader:
     - &id001
-      batch_size: 4
+      batch_size: 16
       data_dir: /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/llama3/hellaswag/val
       data_processor: GptHDF5MapDataProcessor
       num_workers: 8
