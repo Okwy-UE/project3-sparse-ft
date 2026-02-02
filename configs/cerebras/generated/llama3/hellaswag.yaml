@@ -43,7 +43,7 @@ trainer:
       log_steps: 1
     loop:
       eval_steps: 200
-      max_steps: 2000
+      max_steps: 200
       eval_frequency: 200
     model:
       name: llama
