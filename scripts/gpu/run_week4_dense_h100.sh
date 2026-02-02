@@ -55,7 +55,16 @@ for model in "${MODELS[@]}"; do
       run_dir="$(mk_run_dir "w4_bench")"
       echo "[bench] bsz=${bsz} -> ${run_dir}"
 
-      torchrun --nproc_per_node=8 -m src.train.gpu_dense_sft \
+      NPROC="${SLURM_GPUS_ON_NODE:-}"
+      if [[ -z "${NPROC}" ]]; then
+        NPROC="$(python -c 'import torch; print(torch.cuda.device_count())')"
+      fi
+      if [[ "${NPROC}" -le 0 ]]; then
+        echo "No GPUs visible (torch.cuda.device_count()==0). Wrong allocation?"
+        exit 1
+      fi
+      
+      torchrun --nproc_per_node="${NPROC}" -m src.train.gpu_dense_sft \
         --run_dir "${run_dir}" \
         --model_name "${model}" \
         --task "${task}" \
