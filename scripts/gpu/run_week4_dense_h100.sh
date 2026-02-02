@@ -13,14 +13,45 @@ export PYTHONPATH="${PYTHONPATH:-}:$(pwd)"
 export TOKENIZERS_PARALLELISM=false
 
 SEQ_LEN=2048
-BATCH_POINTS=(1 2 4)   # >=3 points as requested
-MAX_STEPS=200          # set to match your baseline budget
+BATCH_POINTS=(16 32 64)   # >=3 points as requested
+MAX_STEPS=200
 LR=2e-5
 WARMUP=10
 WD=0.0
 GRAD_ACCUM=1
 BF16=1
-ATTN_IMPL=""           # optionally: flash_attention_2
+ATTN_IMPL=""
+
+get_visible_gpu_count() {
+  if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    # Count comma-separated entries
+    python - <<'PY'
+import os
+cvd = os.environ.get("CUDA_VISIBLE_DEVICES","")
+print(len([x for x in cvd.split(",") if x.strip() != ""]))
+PY
+    return
+  fi
+  python - <<'PY'
+import torch
+print(torch.cuda.device_count())
+PY
+}
+
+NPROC="$(get_visible_gpu_count)"
+if [[ "${NPROC}" -le 0 ]]; then
+  echo "ERROR: No GPUs visible (CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}). Wrong allocation?"
+  exit 1
+fi
+echo "[env] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+echo "[env] visible_gpu_count=${NPROC}"
+
+# Use single GPU for throughput microbench to avoid DDP overhead and ordinal issues.
+BENCH_CVD="${CUDA_VISIBLE_DEVICES:-}"
+if [[ -n "${BENCH_CVD}" ]]; then
+  export CUDA_VISIBLE_DEVICES="$(echo "${BENCH_CVD}" | cut -d, -f1)"
+fi
+echo "[bench] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
 
 # Model IDs (HF)
 LLAMA="meta-llama/Llama-3.1-8B"
@@ -54,17 +85,8 @@ for model in "${MODELS[@]}"; do
     for bsz in "${BATCH_POINTS[@]}"; do
       run_dir="$(mk_run_dir "w4_bench")"
       echo "[bench] bsz=${bsz} -> ${run_dir}"
-
-      NPROC="${SLURM_GPUS_ON_NODE:-}"
-      if [[ -z "${NPROC}" ]]; then
-        NPROC="$(python -c 'import torch; print(torch.cuda.device_count())')"
-      fi
-      if [[ "${NPROC}" -le 0 ]]; then
-        echo "No GPUs visible (torch.cuda.device_count()==0). Wrong allocation?"
-        exit 1
-      fi
       
-      torchrun --nproc_per_node="${NPROC}" -m src.train.gpu_dense_sft \
+      python -m src.train.gpu_dense_sft \
         --run_dir "${run_dir}" \
         --model_name "${model}" \
         --task "${task}" \
@@ -97,7 +119,7 @@ for model in "${MODELS[@]}"; do
       ds_flag="--deepspeed configs/gpu/deepspeed_zero3_bf16.json"
     fi
 
-    torchrun --nproc_per_node=8 -m src.train.gpu_dense_sft \
+    torchrun --nproc_per_node="${NPROC}" -m src.train.gpu_dense_sft \
       --run_dir "${run_dir}" \
       --model_name "${model}" \
       --task "${task}" \
