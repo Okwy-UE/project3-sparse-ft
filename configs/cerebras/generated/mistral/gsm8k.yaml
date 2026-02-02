@@ -79,7 +79,7 @@ trainer:
     train_dataloader:
       data_dir: /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/mistral/gsm8k/train
       data_processor: GptHDF5MapDataProcessor
-      batch_size: 32
+      batch_size: 256
       shuffle: true
       shuffle_seed: 1337
       num_workers: 8
