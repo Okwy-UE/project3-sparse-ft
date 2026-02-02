@@ -11,7 +11,7 @@ trainer:
       position_embedding_type: rotary
       rotary_dim: 128
       share_embedding_weights: false
-      max_position_embeddings: 2048
+      max_position_embeddings: 1024
       embedding_dropout_rate: 0.0
       num_hidden_layers: 32
       dropout_rate: 0.0
@@ -54,7 +54,7 @@ trainer:
       loss_scaling_factor: dynamic
       max_gradient_norm: 1.0
     loop:
-      max_steps: 2000
+      max_steps: 200
       eval_steps: 200
       eval_frequency: 200
     checkpoint:
