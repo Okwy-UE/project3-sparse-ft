@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import time
+import socket
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -21,6 +22,11 @@ from transformers import (
 
 from src.data.phoenix_sft_tasks import TASKS, format_example, build_sft_features
 
+def _dist_info():
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    rank = int(os.environ.get("RANK", "0"))
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    return local_rank, rank, world_size
 
 @dataclass
 class RunMeta:
@@ -187,7 +193,17 @@ def main() -> None:
     set_seed(args.seed)
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    local_rank, rank, world_size = _dist_info()
+    if torch.cuda.is_available():
+        # Bind this process to its GPU *before* moving model/tensors.
+        torch.cuda.set_device(local_rank)
+        device = torch.device("cuda", local_rank)
+    else:
+        device = torch.device("cpu")
+
+    if rank == 0:
+        print(f"[ddp] host={socket.gethostname()} world_size={world_size}")
+    print(f"[ddp] rank={rank} local_rank={local_rank} device={device}", flush=True)
 
     # Tokenizer + model
     tok = AutoTokenizer.from_pretrained(args.model_name, use_fast=True)
