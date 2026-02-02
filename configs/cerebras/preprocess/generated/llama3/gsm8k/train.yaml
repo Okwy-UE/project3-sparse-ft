@@ -1,0 +1,20 @@
+setup:
+  data:
+    type: "local"
+    source: "__INPUT_DIR__"   # directory containing *.jsonl (or a tmp dir with a symlink)
+  mode: "finetuning"
+  output_dir: "/home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/llama3/gsm8k/train"
+  processes: 8
+
+processing:
+  huggingface_tokenizer: "meta-llama/Meta-Llama-3-8B"
+  max_seq_length: 2048
+  read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:prompt_completion_text_read_hook"
+  read_hook_kwargs:
+    prompt_key: "prompt"
+    completion_key: "completion"
+  shuffle: true
+  shuffle_seed: 13
+
+dataset:
+  pack_sequences: true

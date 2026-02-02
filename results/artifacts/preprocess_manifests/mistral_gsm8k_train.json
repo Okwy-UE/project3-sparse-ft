@@ -1,0 +1,13 @@
+{
+  "model": "mistral",
+  "task": "gsm8k",
+  "split": "train",
+  "tokenizer": "mistralai/Mistral-7B-v0.3",
+  "max_seq_len": 2048,
+  "jsonl_path": "/home/ebereuwadoka/project3-sparse-ft/data/sft/gsm8k/train.jsonl",
+  "jsonl_sha256": "7bdd4db2af4f9017cf3b781a076b5733f5750ba3a4df6145b464a0bc904b28fd",
+  "jsonl_num_lines": 6734,
+  "output_dir": "/home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/mistral/gsm8k/train",
+  "hdf5_num_files": 3,
+  "hdf5_num_shards": 1
+}

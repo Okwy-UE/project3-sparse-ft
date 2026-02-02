@@ -1,0 +1,20 @@
+setup:
+  data:
+    type: "local"
+    source: "/tmp/csdp_mixtral-gsm8k-val.BVlf"   # directory containing *.jsonl (or a tmp dir with a symlink)
+  mode: "finetuning"
+  output_dir: "data/cs_hdf5/mixtral/gsm8k/val"
+  processes: 8
+
+processing:
+  huggingface_tokenizer: "mistralai/Mixtral-8x7B-v0.1"
+  max_seq_length: 2048
+  read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:prompt_completion_text_read_hook"
+  read_hook_kwargs:
+    prompt_key: "prompt"
+    completion_key: "completion"
+  shuffle: true
+  shuffle_seed: 13
+
+dataset:
+  pack_sequences: true

@@ -1,0 +1,13 @@
+{
+  "model": "mistral",
+  "task": "hellaswag",
+  "split": "val",
+  "tokenizer": "mistralai/Mistral-7B-v0.3",
+  "max_seq_len": 2048,
+  "jsonl_path": "/home/ebereuwadoka/project3-sparse-ft/data/sft/hellaswag/val.jsonl",
+  "jsonl_sha256": "66d7ad44a314f40396cb92418910bf5bfae4690218e1606dc6884ca2123f0b18",
+  "jsonl_num_lines": 10042,
+  "output_dir": "/home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/mistral/hellaswag/val",
+  "hdf5_num_files": 10,
+  "hdf5_num_shards": 1
+}

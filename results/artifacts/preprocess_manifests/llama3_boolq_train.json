@@ -1,0 +1,13 @@
+{
+  "model": "llama3",
+  "task": "boolq",
+  "split": "train",
+  "tokenizer": "meta-llama/Meta-Llama-3-8B",
+  "max_seq_len": 2048,
+  "jsonl_path": "/home/ebereuwadoka/project3-sparse-ft/data/sft/boolq/train.jsonl",
+  "jsonl_sha256": "d52d8b029d41f8f170d967b7c86ea6323b39a3ed7846d619069b6dbf14620d1e",
+  "jsonl_num_lines": 9427,
+  "output_dir": "/home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/llama3/boolq/train",
+  "hdf5_num_files": 7,
+  "hdf5_num_shards": 1
+}
