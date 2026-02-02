@@ -1,6 +1,7 @@
 trainer:
   fit:
     train_dataloader:
+      ckpt_path: /home/ebereuwadoka/project3-sparse-ft/checkpoints/cs/llama3p1_8b/model_to_cs-2.5.mdl
       batch_size: 256
       data_dir: /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/llama3/gsm8k/train
       data_processor: GptHDF5MapDataProcessor
