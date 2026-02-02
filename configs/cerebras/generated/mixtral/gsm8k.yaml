@@ -15,7 +15,7 @@ trainer:
       rotary_dim: 128
       rope_theta: 1000000.0
       share_embedding_weights: false
-      max_position_embeddings: 1024
+      max_position_embeddings: 2048
       embedding_dropout_rate: 0.0
       num_hidden_layers: 32
       dropout_rate: 0.0
