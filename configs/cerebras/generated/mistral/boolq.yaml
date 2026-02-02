@@ -89,7 +89,7 @@ trainer:
     - &id001
       data_dir: /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/mistral/boolq/val
       data_processor: GptHDF5DataProcessor
-      batch_size: 32
+      batch_size: 256
       shuffle: false
       num_workers: 8
   validate:
