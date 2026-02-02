@@ -55,18 +55,18 @@ trainer:
       max_gradient_norm: 1.0
     loop:
       max_steps: 200
-      eval_steps: 200
+      eval_steps: 3
       eval_frequency: 200
     checkpoint:
-      steps: 200
+      steps: 1000000
       save_initial_checkpoint: false
     logging:
-      log_steps: 1
+      log_steps: 10
     callbacks:
     - ScopedTrainFlags:
-        csx.performance.micro_batch_size: 1
+        csx.performance.micro_batch_size: auto
     - ScopedValidateFlags:
-        csx.performance.micro_batch_size: 1
+        csx.performance.micro_batch_size: auto
     - Lora:
         lora_params:
           r: 16
@@ -76,9 +76,11 @@ trainer:
           - Linear
           merge_weights: false
   fit:
-    ckpt_path: /home/ebereuwadoka/project3-sparse-ft/checkpoints/cs/mistral_7b/model_to_cs-2.5.mdl
+    ckpt_path: 
+      /home/ebereuwadoka/project3-sparse-ft/checkpoints/cs/mistral_7b/model_to_cs-2.5.mdl
     train_dataloader:
-      data_dir: /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/mistral/hellaswag/train
+      data_dir: 
+        /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/mistral/hellaswag/train
       data_processor: GptHDF5MapDataProcessor
       batch_size: 256
       shuffle: true
@@ -88,7 +90,8 @@ trainer:
       persistent_workers: true
     val_dataloader:
     - &id001
-      data_dir: /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/mistral/hellaswag/val
+      data_dir: 
+        /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/mistral/hellaswag/val
       data_processor: GptHDF5DataProcessor
       batch_size: 256
       shuffle: false

@@ -1,9 +1,11 @@
 trainer:
   fit:
-    ckpt_path: /home/ebereuwadoka/project3-sparse-ft/checkpoints/cs/llama3p1_8b/model_to_cs-2.5.mdl
+    ckpt_path: 
+      /home/ebereuwadoka/project3-sparse-ft/checkpoints/cs/llama3p1_8b/model_to_cs-2.5.mdl
     train_dataloader:
       batch_size: 256
-      data_dir: /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/llama3/boolq/train
+      data_dir: 
+        /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/llama3/boolq/train
       data_processor: GptHDF5MapDataProcessor
       num_workers: 8
       persistent_workers: true
@@ -13,7 +15,8 @@ trainer:
     val_dataloader:
     - &id001
       batch_size: 256
-      data_dir: /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/llama3/boolq/val
+      data_dir: 
+        /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/llama3/boolq/val
       data_processor: GptHDF5MapDataProcessor
       num_workers: 8
       shuffle: false
@@ -22,9 +25,9 @@ trainer:
       backend_type: CSX
     callbacks:
     - ScopedTrainFlags:
-        csx.performance.micro_batch_size: 1
+        csx.performance.micro_batch_size: auto
     - ScopedValidateFlags:
-        csx.performance.micro_batch_size: 1
+        csx.performance.micro_batch_size: auto
     - ComputeNorm: {}
     - LoadCheckpointStates:
         load_checkpoint_states: model
@@ -39,11 +42,11 @@ trainer:
     checkpoint:
       disable_strict_checkpoint_loading: true
       save_initial_checkpoint: false
-      steps: 200
+      steps: 1000000
     logging:
-      log_steps: 1
+      log_steps: 10
     loop:
-      eval_steps: 200
+      eval_steps: 3
       max_steps: 200
       eval_frequency: 200
     model:
