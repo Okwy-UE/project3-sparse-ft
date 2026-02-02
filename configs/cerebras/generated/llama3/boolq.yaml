@@ -1,5 +1,6 @@
 trainer:
   fit:
+    ckpt_path: /home/ebereuwadoka/project3-sparse-ft/checkpoints/cs/llama3p1_8b/model_to_cs-2.5.mdl
     train_dataloader:
       batch_size: 256
       data_dir: /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/llama3/boolq/train
