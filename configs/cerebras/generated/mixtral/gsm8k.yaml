@@ -97,7 +97,7 @@ trainer:
     - &id001
       data_processor: GptHDF5DataProcessor
       data_dir: /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/mixtral/gsm8k/val
-      batch_size: 12
+      batch_size: 256
       shuffle: false
       num_workers: 8
   validate:
