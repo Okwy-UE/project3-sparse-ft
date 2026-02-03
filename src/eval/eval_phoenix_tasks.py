@@ -18,7 +18,6 @@ def run_lm_eval_harness(
     """
     try:
         from lm_eval import evaluator
-        from lm_eval.models.huggingface import HFLM
     except Exception as e:
         raise RuntimeError(
             "lm-eval-harness is not installed. Install with: pip install 'lm_eval[hf]'\n"
@@ -33,13 +32,6 @@ def run_lm_eval_harness(
             model_args_parts.append(f"{k}={v}")
 
     model_args = ",".join(model_args_parts)
-
-    lm = HFLM(
-        pretrained=base_model_id,
-        dtype="bfloat16",
-        device=device,
-        # HFLM parses model_args internally in CLI; here we pass explicit args.
-    )
 
     # NOTE: HFLM constructed above does not automatically load PEFT adapter.
     # In python API, easiest is to use evaluator.simple_evaluate with model_args string.
