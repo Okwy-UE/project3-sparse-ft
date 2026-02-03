@@ -48,7 +48,7 @@ data:
 
 # deepspeed (recommended for Mixtral; optional for 7B/8B)
 deepspeed:
-  enabled: true
+  enabled: false
   config_path: configs/gpu/deepspeed_zero3_bf16.json
 
 # evaluation harness
