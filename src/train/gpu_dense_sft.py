@@ -484,7 +484,7 @@ def train_and_eval_week4(
         "tokens_total": tokens_total,
     })
 
-        if hasattr(accelerator, "free_memory"):
+    if hasattr(accelerator, "free_memory"):
             accelerator.free_memory()
     except Exception:
         pass
