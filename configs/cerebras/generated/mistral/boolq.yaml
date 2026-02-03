@@ -30,6 +30,9 @@ trainer:
       nonlinearity: swiglu
       use_ffn_bias: false
       use_bias_in_output: false
+      initializer:
+        name: pretrained
+        checkpoint_path: /home/ebereuwadoka/project3-sparse-ft/checkpoints/cs/mistral_7b/model_to_cs-2.5.mdl
     optimizer:
       AdamW:
         betas:
@@ -76,8 +79,7 @@ trainer:
           - Linear
           merge_weights: false
   fit:
-    ckpt_path: 
-      /home/ebereuwadoka/project3-sparse-ft/checkpoints/cs/mistral_7b/model_to_cs-2.5.mdl
+    ckpt_path: null
     train_dataloader:
       data_dir: 
         /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/mistral/boolq/train
