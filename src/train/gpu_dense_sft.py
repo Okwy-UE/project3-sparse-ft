@@ -334,12 +334,12 @@ def pick_throughput_points(max_micro: int, k: int) -> List[int]:
     return pts[:k]
 
 
-def auto_find_max_micro_batch(model_id: str, task: str, run_dir: str, cfg: Week4Config, start: int = 32, cap: int = 256) -> int:
+def auto_find_max_micro_batch(model_id: str, task: str, run_dir: str, cfg: Week4Config, start: int = 16, cap: int = 32) -> int:
     """
     Conservative OOM-based search: try 1,2,4,... until fail.
     Returns largest successful micro_batch.
     """
-    best = 1
+    best = start
     b = start
     while b <= cap:
         try:
@@ -349,6 +349,7 @@ def auto_find_max_micro_batch(model_id: str, task: str, run_dir: str, cfg: Week4
         except RuntimeError as e:
             msg = str(e).lower()
             if "out of memory" in msg or "cuda oom" in msg:
+                print(f"best size if {best}")
                 break
             # non-OOM error should surface
             raise
