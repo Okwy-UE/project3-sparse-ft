@@ -349,7 +349,7 @@ def auto_find_max_micro_batch(model_id: str, task: str, run_dir: str, cfg: Week4
         except RuntimeError as e:
             msg = str(e).lower()
             if "out of memory" in msg or "cuda oom" in msg:
-                print(f"best size if {best}")
+                print(f"best size is {best}")
                 break
             # non-OOM error should surface
             raise
