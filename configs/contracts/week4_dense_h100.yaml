@@ -3,9 +3,9 @@ max_seq_len: 2048
 
 # training budget (tune if needed, but keep consistent across CS-3 vs GPU when possible)
 max_steps:
-  boolq: 600
-  hellaswag: 600
-  gsm8k: 800
+  boolq: 200
+  hellaswag: 200
+  gsm8k: 200
 
 warmup_ratio: 0.03
 lr: 2.0e-4
