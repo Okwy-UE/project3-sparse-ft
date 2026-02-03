@@ -73,8 +73,7 @@ trainer:
           r: 16
           alpha: 32
           dropout: 0.05
-          target_modules:
-          - Linear
+          target_modules: ["Linear"]
           merge_weights: false
   fit:
     ckpt_path: /home/ebereuwadoka/project3-sparse-ft/checkpoints/cs/mistral_7b/model_to_cs-2.5.mdl
