@@ -1,309 +1,461 @@
-# src/train/gpu_dense_sft.py
 from __future__ import annotations
 
-import argparse
+import gc
 import json
 import os
-import platform
-import socket
 import time
-from dataclasses import asdict, dataclass
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any, Dict, Optional, List
 
 import torch
-from datasets import load_dataset
-from transformers import (
-    AutoTokenizer,
-    AutoModelForCausalLM,
-    TrainingArguments,
-    Trainer,
-    set_seed,
-)
+from torch.utils.data import DataLoader
 
-from src.data.phoenix_sft_tasks import TASKS, build_sft_features
-from src.utils.run_logging import snapshot_env
+from transformers import AutoModelForCausalLM, AutoTokenizer, get_cosine_schedule_with_warmup
 
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, default))
-    except Exception:
-        return default
+from src.data.phoenix_sft_tasks import build_sft_dataset, make_tokenize_fn
+from src.eval.eval_phoenix_tasks import run_lm_eval_harness
+from src.utils.run_logging import write_json
 
-def get_rank() -> int:
-    return _env_int("RANK", 0)
-
-def get_world_size() -> int:
-    return _env_int("WORLD_SIZE", 1)
-
-def is_main_process() -> bool:
-    return get_rank() == 0
-
-def _dist_info():
-    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    rank = int(os.environ.get("RANK", "0"))
-    world_size = int(os.environ.get("WORLD_SIZE", "1"))
-    return local_rank, rank, world_size
-
-def write_json(path: Path, obj: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(obj, indent=2, sort_keys=True))
-    tmp.replace(path)
-
-def cuda_peak_mem_gb() -> float:
-    if not torch.cuda.is_available():
-        return 0.0
-    return torch.cuda.max_memory_allocated() / (1024**3)
 
 @dataclass
-class RunMeta:
-    week: int
-    run_kind: str  # bench|train
-    group_id: str  # ties bench/train/eval for a model-task
-    model_name: str
-    task: str
-    seq_len: int
-    per_device_train_batch_size: int
-    gradient_accumulation_steps: int
+class Week4Config:
+    seed: int
+    max_seq_len: int
     max_steps: int
-    learning_rate: float
+    warmup_ratio: float
+    lr: float
     weight_decay: float
-    warmup_steps: int
-    precision: str
-    world_size: int
-    hostname: str
-    gpu_name: str
-    timestamp: float
+    adam_beta1: float
+    adam_beta2: float
+    adam_eps: float
+    grad_clip_norm: float
+    mixed_precision: str  # "bf16"
+    # peft
+    peft_mode: str  # "lora" or "none"
+    lora_r: int
+    lora_alpha: int
+    lora_dropout: float
+    lora_target_modules: List[str]
+    # data
+    max_train_samples: Optional[int]
+    max_eval_samples: Optional[int]
+    num_proc: int
+    # deepspeed
+    deepspeed_enabled: bool
+    deepspeed_config_path: str
+    # throughput
+    tp_warmup_steps: int
+    tp_measure_steps: int
+    tp_points: int
+    # eval
+    eval_use_lm_eval: bool
+    eval_task_name: str
+    eval_batch_size: str
 
-class SFTDataset(torch.utils.data.Dataset):
-    def __init__(self, rows: List[Dict[str, torch.Tensor]]):
-        self.rows = rows
-    def __len__(self) -> int:
-        return len(self.rows)
-    def __getitem__(self, i: int) -> Dict[str, torch.Tensor]:
-        return self.rows[i]
 
-def build_dataset(task: str, split: str, tokenizer, seq_len: int, max_examples: Optional[int]) -> SFTDataset:
-    spec = TASKS[task]
-    path, name = spec.dataset_id
-    ds = load_dataset(path, name, split=split)
+def set_seed(seed: int):
+    import random
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
-    if max_examples is not None:
-        ds = ds.select(range(min(max_examples, len(ds))))
 
-    rows: List[Dict[str, torch.Tensor]] = []
-    for ex in ds:
-        prompt, target = spec.formatter(ex)
-        feats = build_sft_features(tokenizer, prompt, target, max_length=seq_len)
-        rows.append({k: torch.tensor(v, dtype=torch.long) for k, v in feats.items()})
-    return SFTDataset(rows)
+def _load_contract_yaml(path: str) -> Dict[str, Any]:
+    import yaml
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
 
-def bench_one_step(
-    model,
-    seq_len: int,
-    micro_bsz: int,
-    warmup_steps: int,
-    measured_steps: int,
-    device: torch.device,
-    lr: float,
+
+def resolve_week4_config(contract: Dict[str, Any], task: str) -> Week4Config:
+    peft = contract["peft"]
+    data = contract["data"]
+    ds = contract["deepspeed"]
+    tp = contract["throughput"]
+    ev = contract["eval"]
+
+    return Week4Config(
+        seed=int(contract["seed"]),
+        max_seq_len=int(contract["max_seq_len"]),
+        max_steps=int(contract["max_steps"][task]),
+        warmup_ratio=float(contract["warmup_ratio"]),
+        lr=float(contract["lr"]),
+        weight_decay=float(contract["weight_decay"]),
+        adam_beta1=float(contract["adam_beta1"]),
+        adam_beta2=float(contract["adam_beta2"]),
+        adam_eps=float(contract["adam_eps"]),
+        grad_clip_norm=float(contract["grad_clip_norm"]),
+        mixed_precision=str(contract["mixed_precision"]),
+        peft_mode=str(peft["mode"]),
+        lora_r=int(peft["r"]),
+        lora_alpha=int(peft["alpha"]),
+        lora_dropout=float(peft["dropout"]),
+        lora_target_modules=list(peft["target_modules"]),
+        max_train_samples=data.get("max_train_samples", None),
+        max_eval_samples=data.get("max_eval_samples", None),
+        num_proc=int(data.get("num_proc", 1)),
+        deepspeed_enabled=bool(ds["enabled"]),
+        deepspeed_config_path=str(ds["config_path"]),
+        tp_warmup_steps=int(tp["warmup_steps"]),
+        tp_measure_steps=int(tp["measure_steps"]),
+        tp_points=int(tp["points"]),
+        eval_use_lm_eval=bool(ev["use_lm_eval"]),
+        eval_task_name=str(ev["tasks_map"][task]),
+        eval_batch_size=str(ev["batch_size"]),
+    )
+
+
+def maybe_apply_lora(model, cfg: Week4Config):
+    if cfg.peft_mode != "lora":
+        return model, None
+
+    try:
+        from peft import LoraConfig, get_peft_model
+    except Exception as e:
+        raise RuntimeError(
+            "peft is required for LoRA baseline. Install: pip install peft\n"
+            f"Import error: {e}"
+        )
+
+    lora_cfg = LoraConfig(
+        r=cfg.lora_r,
+        lora_alpha=cfg.lora_alpha,
+        lora_dropout=cfg.lora_dropout,
+        bias="none",
+        task_type="CAUSAL_LM",
+        target_modules=cfg.lora_target_modules,
+    )
+    model = get_peft_model(model, lora_cfg)
+    model.print_trainable_parameters()
+    return model, lora_cfg
+
+
+def build_loaders(task: str, tokenizer, cfg: Week4Config, micro_batch: int):
+    ds_train = build_sft_dataset(task, "train", max_samples=cfg.max_train_samples, seed=cfg.seed)
+    ds_eval = build_sft_dataset(task, "eval", max_samples=cfg.max_eval_samples, seed=cfg.seed)
+
+    tok_fn = make_tokenize_fn(tokenizer, cfg.max_seq_len)
+    ds_train = ds_train.map(tok_fn, remove_columns=ds_train.column_names, num_proc=cfg.num_proc)
+    ds_eval = ds_eval.map(tok_fn, remove_columns=ds_eval.column_names, num_proc=cfg.num_proc)
+
+    dl_train = DataLoader(ds_train, batch_size=micro_batch, shuffle=True, drop_last=True)
+    dl_eval = DataLoader(ds_eval, batch_size=micro_batch, shuffle=False, drop_last=False)
+    return ds_train, ds_eval, dl_train, dl_eval
+
+
+def bench_throughput_single(
+    model_id: str,
+    task: str,
+    run_dir: str,
+    cfg: Week4Config,
+    micro_batch: int,
 ) -> Dict[str, Any]:
-    assert measured_steps >= 1
-    torch.cuda.reset_peak_memory_stats()
+    """
+    Bench a short train loop to measure tokens/s at a given micro_batch.
+    Uses DeepSpeed (if enabled) for Mixtral feasibility.
+    """
+    torch.cuda.empty_cache()
+    gc.collect()
+    set_seed(cfg.seed)
+
+    tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        torch_dtype=torch.bfloat16,
+        low_cpu_mem_usage=True,
+    )
+    model.config.use_cache = False
+    model.gradient_checkpointing_enable()
+
+    model, _ = maybe_apply_lora(model, cfg)
+
+    ds_cfg = None
+    if cfg.deepspeed_enabled:
+        with open(cfg.deepspeed_config_path, "r") as f:
+            ds_cfg = json.load(f)
+        from accelerate import Accelerator
+        from accelerate.utils import DeepSpeedPlugin
+        ds_plugin = DeepSpeedPlugin(hf_ds_config=ds_cfg)
+        accelerator = Accelerator(mixed_precision=cfg.mixed_precision, deepspeed_plugin=ds_plugin)
+    else:
+        from accelerate import Accelerator
+        accelerator = Accelerator(mixed_precision=cfg.mixed_precision)
+
+    _, _, dl_train, _ = build_loaders(task, tokenizer, cfg, micro_batch=micro_batch)
+
+    # Optimizer over trainable params only (LoRA => small)
+    optim = torch.optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad],
+        lr=cfg.lr,
+        betas=(cfg.adam_beta1, cfg.adam_beta2),
+        eps=cfg.adam_eps,
+        weight_decay=cfg.weight_decay,
+    )
+
+    num_warmup = max(1, int(cfg.warmup_ratio * cfg.max_steps))
+    sched = get_cosine_schedule_with_warmup(
+        optim,
+        num_warmup_training_steps=num_warmup,
+        num_training_steps=cfg.max_steps,
+    )
+
+    model, optim, dl_train, sched = accelerator.prepare(model, optim, dl_train, sched)
     model.train()
 
-    optim = torch.optim.AdamW(model.parameters(), lr=lr)
+    # Warmup + measure
+    total_steps = cfg.tp_warmup_steps + cfg.tp_measure_steps
+    step_times = []
+    tokens_per_step = micro_batch * accelerator.num_processes * cfg.max_seq_len
 
-    vocab = model.get_input_embeddings().weight.shape[0]
-    input_ids = torch.randint(0, vocab, (micro_bsz, seq_len), device=device)
-    attention_mask = torch.ones((micro_bsz, seq_len), device=device)
-    labels = input_ids.clone()
+    it = iter(dl_train)
+    for step in range(total_steps):
+        batch = next(it)
+        t0 = time.perf_counter()
+        with accelerator.accumulate(model):
+            out = model(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                labels=batch["labels"],
+            )
+            loss = out.loss
+            accelerator.backward(loss)
+            if cfg.grad_clip_norm is not None and cfg.grad_clip_norm > 0:
+                accelerator.clip_grad_norm_(model.parameters(), cfg.grad_clip_norm)
+            optim.step()
+            sched.step()
+            optim.zero_grad(set_to_none=True)
 
-    for _ in range(warmup_steps):
-        out = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-        out.loss.backward()
-        optim.step()
-        optim.zero_grad(set_to_none=True)
+        accelerator.wait_for_everyone()
+        dt = time.perf_counter() - t0
+        if step >= cfg.tp_warmup_steps:
+            step_times.append(dt)
 
-    torch.cuda.synchronize()
-    t0 = time.perf_counter()
-    for _ in range(measured_steps):
-        out = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-        out.loss.backward()
-        optim.step()
-        optim.zero_grad(set_to_none=True)
-    torch.cuda.synchronize()
-    t1 = time.perf_counter()
+    mean_dt = sum(step_times) / max(1, len(step_times))
+    tok_s = tokens_per_step / mean_dt if mean_dt > 0 else 0.0
 
-    dt = (t1 - t0) / measured_steps
-    return {
-        "micro_bsz": micro_bsz,
-        "seq_len": seq_len,
-        "step_time_s": dt,
-        "samples_per_s": micro_bsz / dt,
-        "tokens_per_s": (micro_bsz * seq_len) / dt,
-        "peak_mem_gb": cuda_peak_mem_gb(),
-        "effective_global_bsz": micro_bsz * get_world_size(),
+    peak_mem = None
+    if torch.cuda.is_available():
+        peak_mem = torch.cuda.max_memory_allocated() / (1024 ** 3)
+
+    metrics = {
+        "micro_batch": micro_batch,
+        "world_size": accelerator.num_processes,
+        "seq_len": cfg.max_seq_len,
+        "tokens_per_step": tokens_per_step,
+        "mean_step_time_s": mean_dt,
+        "tokens_per_s": tok_s,
+        "peak_mem_gb": peak_mem,
     }
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser()
-    p.add_argument("--run_dir", type=str, required=True)
-    p.add_argument("--group_id", type=str, required=True)
-    p.add_argument("--model_name", type=str, required=True)
-    p.add_argument("--task", type=str, choices=list(TASKS.keys()), required=True)
+    return metrics
 
-    p.add_argument("--seq_len", type=int, default=2048)
-    p.add_argument("--per_device_train_batch_size", type=int, default=1)
-    p.add_argument("--gradient_accumulation_steps", type=int, default=1)
-    p.add_argument("--max_steps", type=int, default=200)
-    p.add_argument("--learning_rate", type=float, default=2e-5)
-    p.add_argument("--weight_decay", type=float, default=0.0)
-    p.add_argument("--warmup_steps", type=int, default=10)
 
-    p.add_argument("--bf16", action="store_true")
-    p.add_argument("--gradient_checkpointing", action="store_true")
-    p.add_argument("--attn_implementation", type=str, default=None)  # e.g. flash_attention_2
-    p.add_argument("--deepspeed", type=str, default=None)
+def pick_throughput_points(max_micro: int, k: int) -> List[int]:
+    # choose descending points: max, ~half, ~quarter (unique, >=1)
+    pts = []
+    cur = max_micro
+    while len(pts) < k and cur >= 1:
+        if cur not in pts:
+            pts.append(cur)
+        cur = max(1, cur // 2)
+        if cur == 1 and 1 in pts:
+            break
+    # ensure at least 3 points if possible
+    if len(pts) < k:
+        for b in [1, 2, 4, 8, 16]:
+            if b <= max_micro and b not in pts:
+                pts.append(b)
+            if len(pts) >= k:
+                break
+    return pts[:k]
 
-    p.add_argument("--max_train_examples", type=int, default=None)
-    p.add_argument("--max_eval_examples", type=int, default=None)
 
-    p.add_argument("--bench_only", action="store_true")
-    p.add_argument("--bench_warmup_steps", type=int, default=1)
-    p.add_argument("--bench_measured_steps", type=int, default=1)
+def auto_find_max_micro_batch(model_id: str, task: str, run_dir: str, cfg: Week4Config, start: int = 1, cap: int = 64) -> int:
+    """
+    Conservative OOM-based search: try 1,2,4,... until fail.
+    Returns largest successful micro_batch.
+    """
+    best = 1
+    b = start
+    while b <= cap:
+        try:
+            _ = bench_throughput_single(model_id, task, run_dir, cfg, micro_batch=b)
+            best = b
+            b *= 2
+        except RuntimeError as e:
+            msg = str(e).lower()
+            if "out of memory" in msg or "cuda oom" in msg:
+                break
+            # non-OOM error should surface
+            raise
+        finally:
+            torch.cuda.empty_cache()
+            gc.collect()
+    return best
 
-    p.add_argument("--seed", type=int, default=1234)
-    return p.parse_args()
 
-def main() -> None:
-    args = parse_args()
-    run_dir = Path(args.run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
+def train_and_eval_week4(
+    model_id: str,
+    task: str,
+    contract_yaml: str,
+    run_dir: str,
+    eval_device: str = "cuda:0",
+) -> Dict[str, Any]:
+    contract = _load_contract_yaml(contract_yaml)
+    cfg = resolve_week4_config(contract, task)
+    set_seed(cfg.seed)
 
-    set_seed(args.seed)
-    torch.backends.cuda.matmul.allow_tf32 = True
+    write_json(os.path.join(run_dir, "week4_contract_resolved.json"), contract)
 
-    local_rank, rank, world_size = _dist_info()
-    if torch.cuda.is_available():
-        torch.cuda.set_device(local_rank)
-        device = torch.device("cuda", local_rank)
-        gpu_name = torch.cuda.get_device_name(local_rank)
-    else:
-        device = torch.device("cpu")
-        gpu_name = "cpu"
+    # ---- Auto micro-batch
+    max_micro = auto_find_max_micro_batch(model_id, task, run_dir, cfg, start=1, cap=64)
+    tp_points = pick_throughput_points(max_micro, cfg.tp_points)
 
-    if rank == 0:
-        print(f"[ddp] host={socket.gethostname()} world_size={world_size}")
-    print(f"[ddp] rank={rank} local_rank={local_rank} device={device}", flush=True)
+    # ---- Throughput bench
+    tp_metrics = []
+    for b in tp_points:
+        m = bench_throughput_single(model_id, task, run_dir, cfg, micro_batch=b)
+        tp_metrics.append(m)
 
-    # Tokenizer / model
-    tok = AutoTokenizer.from_pretrained(args.model_name, use_fast=True)
-    if tok.pad_token_id is None:
-        tok.pad_token = tok.eos_token
+    write_json(os.path.join(run_dir, "throughput_scaling.json"), {"points": tp_metrics})
 
-    dtype = torch.bfloat16 if args.bf16 else None
+    # ---- Final training run at max_micro (fresh model)
+    torch.cuda.empty_cache()
+    gc.collect()
+    tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
     model = AutoModelForCausalLM.from_pretrained(
-        args.model_name,
-        torch_dtype=dtype,
+        model_id,
+        torch_dtype=torch.bfloat16,
         low_cpu_mem_usage=True,
-        attn_implementation=args.attn_implementation,
-        device_map=None,
+    )
+    model.config.use_cache = False
+    model.gradient_checkpointing_enable()
+
+    model, lora_cfg = maybe_apply_lora(model, cfg)
+
+    ds_cfg = None
+    if cfg.deepspeed_enabled:
+        with open(cfg.deepspeed_config_path, "r") as f:
+            ds_cfg = json.load(f)
+        from accelerate import Accelerator
+        from accelerate.utils import DeepSpeedPlugin
+        ds_plugin = DeepSpeedPlugin(hf_ds_config=ds_cfg)
+        accelerator = Accelerator(mixed_precision=cfg.mixed_precision, deepspeed_plugin=ds_plugin)
+    else:
+        from accelerate import Accelerator
+        accelerator = Accelerator(mixed_precision=cfg.mixed_precision)
+
+    _, _, dl_train, _ = build_loaders(task, tokenizer, cfg, micro_batch=max_micro)
+
+    optim = torch.optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad],
+        lr=cfg.lr,
+        betas=(cfg.adam_beta1, cfg.adam_beta2),
+        eps=cfg.adam_eps,
+        weight_decay=cfg.weight_decay,
     )
 
-    if args.gradient_checkpointing:
-        model.gradient_checkpointing_enable()
-        model.config.use_cache = False
-
-    model.to(device)
-
-    meta = RunMeta(
-        week=4,
-        run_kind="bench" if args.bench_only else "train",
-        group_id=args.group_id,
-        model_name=args.model_name,
-        task=args.task,
-        seq_len=args.seq_len,
-        per_device_train_batch_size=args.per_device_train_batch_size,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        max_steps=args.max_steps,
-        learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay,
-        warmup_steps=args.warmup_steps,
-        precision="bf16" if args.bf16 else "fp32",
-        world_size=get_world_size(),
-        hostname=platform.node(),
-        gpu_name=gpu_name,
-        timestamp=time.time(),
+    num_warmup = max(1, int(cfg.warmup_ratio * cfg.max_steps))
+    sched = get_cosine_schedule_with_warmup(
+        optim,
+        num_warmup_training_steps=num_warmup,
+        num_training_steps=cfg.max_steps,
     )
 
-    if is_main_process():
-        write_json(run_dir / "run_meta.json", asdict(meta))
-        snapshot_env(run_dir)
+    model, optim, dl_train, sched = accelerator.prepare(model, optim, dl_train, sched)
+    model.train()
 
-    if args.bench_only:
-        bench = bench_one_step(
-            model=model,
-            seq_len=args.seq_len,
-            micro_bsz=args.per_device_train_batch_size,
-            warmup_steps=args.bench_warmup_steps,
-            measured_steps=args.bench_measured_steps,
-            device=device,
-            lr=args.learning_rate,
+    train_log = {"loss_last": None, "steps": cfg.max_steps}
+    tokens_per_step = max_micro * accelerator.num_processes * cfg.max_seq_len
+    t_train0 = time.perf_counter()
+
+    it = iter(dl_train)
+    for step in range(cfg.max_steps):
+        batch = next(it)
+        out = model(
+            input_ids=batch["input_ids"],
+            attention_mask=batch["attention_mask"],
+            labels=batch["labels"],
         )
-        if is_main_process():
-            write_json(run_dir / "throughput.json", bench)
-        return
+        loss = out.loss
+        accelerator.backward(loss)
+        if cfg.grad_clip_norm is not None and cfg.grad_clip_norm > 0:
+            accelerator.clip_grad_norm_(model.parameters(), cfg.grad_clip_norm)
+        optim.step()
+        sched.step()
+        optim.zero_grad(set_to_none=True)
 
-    # Dataset
-    train_split = TASKS[args.task].train_split
-    eval_split = TASKS[args.task].eval_split
-    train_ds = build_dataset(args.task, train_split, tok, args.seq_len, args.max_train_examples)
-    eval_ds = build_dataset(args.task, eval_split, tok, args.seq_len, args.max_eval_examples)
+        if (step + 1) % 50 == 0 and accelerator.is_main_process:
+            write_json(os.path.join(run_dir, "train_progress.json"), {"step": step + 1, "loss": float(loss.detach().cpu())})
 
-    targs = TrainingArguments(
-        output_dir=str(run_dir / "hf_out"),
-        overwrite_output_dir=True,
-        per_device_train_batch_size=args.per_device_train_batch_size,
-        per_device_eval_batch_size=max(1, args.per_device_train_batch_size),
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        max_steps=args.max_steps,
-        learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay,
-        warmup_steps=args.warmup_steps,
-        bf16=args.bf16,
-        logging_steps=10,
-        save_steps=max(50, args.max_steps // 4),
-        eval_steps=max(50, args.max_steps // 4),
-        evaluation_strategy="steps",
-        save_total_limit=2,
-        report_to=[],
-        deepspeed=args.deepspeed,
-        dataloader_num_workers=2,
-        ddp_find_unused_parameters=False,
-    )
+        train_log["loss_last"] = float(loss.detach().cpu())
 
-    trainer = Trainer(
-        model=model,
-        args=targs,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
-        tokenizer=tok,
-    )
+    accelerator.wait_for_everyone()
+    t_train1 = time.perf_counter()
+    train_s = t_train1 - t_train0
+    tokens_total = tokens_per_step * cfg.max_steps
+    train_tok_s = tokens_total / train_s if train_s > 0 else 0.0
 
-    torch.cuda.reset_peak_memory_stats()
-    train_result = trainer.train()
+    # ---- Save adapter (main process only)
+    adapter_dir = os.path.join(run_dir, "adapter")
+    if accelerator.is_main_process:
+        os.makedirs(adapter_dir, exist_ok=True)
+        # save PEFT adapter if present; otherwise full model
+        if cfg.peft_mode == "lora":
+            model_to_save = accelerator.unwrap_model(model)
+            model_to_save.save_pretrained(adapter_dir)
+        else:
+            model_to_save = accelerator.unwrap_model(model)
+            model_to_save.save_pretrained(adapter_dir)
+        tokenizer.save_pretrained(adapter_dir)
 
-    if is_main_process():
-        summary = {
-            "train_loss": float(train_result.training_loss) if train_result.training_loss is not None else None,
-            "global_steps": int(trainer.state.global_step),
-            "train_runtime_s": float(trainer.state.log_history[-1].get("train_runtime", 0.0)) if trainer.state.log_history else None,
-            "peak_mem_gb": cuda_peak_mem_gb(),
-            "effective_global_bsz": args.per_device_train_batch_size * get_world_size() * args.gradient_accumulation_steps,
-        }
-        write_json(run_dir / "train_summary.json", summary)
-        write_json(run_dir / "checkpoint.json", {"hf_out_dir": str(run_dir / "hf_out")})
+    accelerator.wait_for_everyone()
 
-if __name__ == "__main__":
-    main()
+    write_json(os.path.join(run_dir, "train_summary.json"), {
+        "micro_batch": max_micro,
+        "world_size": accelerator.num_processes,
+        "seq_len": cfg.max_seq_len,
+        "steps": cfg.max_steps,
+        "train_time_s": train_s,
+        "train_tokens_per_s": train_tok_s,
+        "loss_last": train_log["loss_last"],
+        "tokens_total": tokens_total,
+    })
+
+    # ---- Eval (lm-eval-harness)
+    eval_out = {}
+    if cfg.eval_use_lm_eval and accelerator.is_main_process:
+        eval_path = os.path.join(run_dir, "lm_eval.json")
+        eval_out = run_lm_eval_harness(
+            base_model_id=model_id,
+            peft_adapter_path=adapter_dir if cfg.peft_mode == "lora" else None,
+            tasks=[cfg.eval_task_name],
+            out_json_path=eval_path,
+            batch_size=cfg.eval_batch_size,
+            device=eval_device,
+            extra_model_args=None,
+        )
+
+    accelerator.wait_for_everyone()
+
+    run_result = {
+        "model_id": model_id,
+        "task": task,
+        "seq_len": cfg.max_seq_len,
+        "peft_mode": cfg.peft_mode,
+        "micro_batch_final": max_micro,
+        "throughput_points": tp_metrics,
+        "train_tokens_per_s": train_tok_s,
+        "train_time_s": train_s,
+        "loss_last": train_log["loss_last"],
+        "lm_eval": eval_out,
+        "adapter_dir": adapter_dir,
+    }
+
+    write_json(os.path.join(run_dir, "run_result.json"), run_result)
+    return run_result
