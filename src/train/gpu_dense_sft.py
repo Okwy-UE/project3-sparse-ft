@@ -199,7 +199,7 @@ def build_loaders(task: str, tokenizer, cfg: Week4Config, micro_batch: int):
 
     tok_fn = make_tokenize_fn(tokenizer, cfg.max_seq_len)
     ds_train = ds_train.map(tok_fn, remove_columns=ds_train.column_names, num_proc=cfg.num_proc, desc="tokenize train")
-    ds_eval = ds_eval.map(tok_fn, remove_columns=ds_eval.column_names, num_proc=cfg.num_proc, desc="tokenize train")
+    ds_eval = ds_eval.map(tok_fn, remove_columns=ds_eval.column_names, num_proc=cfg.num_proc, desc="tokenize eval")
 
     cols = ["input_ids", "attention_mask", "labels"]
     ds_train.set_format(type="torch", columns=cols)
@@ -268,8 +268,12 @@ def bench_throughput_single(
     tokens_per_step = micro_batch * accelerator.num_processes * cfg.max_seq_len
 
     it = iter(dl_train)
-    for step in tqdm_if_main(accelerator, range(cfg.max_steps), desc="train"):
-        batch = next(it)
+    for step in tqdm_if_main(accelerator, range(total_steps), desc=f"bench(bs={micro_batch})"):
+        try:
+            batch = next(it)
+        except StopIteration:
+            it = iter(dl_train)
+            batch = next(it)
         t0 = time.perf_counter()
         with accelerator.accumulate(model):
             out = model(
@@ -423,8 +427,12 @@ def train_and_eval_week4(
     t_train0 = time.perf_counter()
 
     it = iter(dl_train)
-    for step in tqdm_if_main(accelerator, range(total_steps), desc=f"bench(bs={micro_batch})"):
-        batch = next(it)
+    for step in tqdm_if_main(accelerator, range(cfg.max_steps), desc="train"):
+        try:
+            batch = next(it)
+        except StopIteration:
+            it = iter(dl_train)
+            batch = next(it)
         out = model(
             input_ids=batch["input_ids"],
             attention_mask=batch["attention_mask"],
