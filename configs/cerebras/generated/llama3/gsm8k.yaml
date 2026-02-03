@@ -14,7 +14,7 @@ trainer:
       shuffle_seed: 1337
     val_dataloader:
     - &id001
-      batch_size: 256
+      batch_size: 16
       data_dir: 
         /home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/llama3/gsm8k/val
       data_processor: GptHDF5MapDataProcessor
