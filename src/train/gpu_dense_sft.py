@@ -339,7 +339,7 @@ def auto_find_max_micro_batch(model_id: str, task: str, run_dir: str, cfg: Week4
     Conservative OOM-based search: try 1,2,4,... until fail.
     Returns largest successful micro_batch.
     """
-    best = start
+    best = 1
     b = start
     while b <= cap:
         try:
