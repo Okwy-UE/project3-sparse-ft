@@ -16,6 +16,58 @@ from src.data.phoenix_sft_tasks import build_sft_dataset, make_tokenize_fn
 from src.eval.eval_phoenix_tasks import run_lm_eval_harness
 from src.utils.run_logging import write_json
 
+import shutil
+import traceback
+
+def _cuda_toolkit_available() -> bool:
+    """
+    DeepSpeed op loader needs CUDA toolkit (CUDA_HOME and nvcc).
+    On some HPC setups you have driver libs but not toolkit, so disable DS.
+    """
+    cuda_home = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH")
+    nvcc = shutil.which("nvcc")
+    return (cuda_home is not None and os.path.isdir(cuda_home)) or (nvcc is not None)
+
+def _make_accelerator(cfg, run_dir: str):
+    """
+    Create an Accelerator. If DeepSpeed is requested but not available, fall back
+    to non-DeepSpeed accelerator and log the reason to run_dir.
+    """
+    from accelerate import Accelerator
+
+    if not getattr(cfg, "deepspeed_enabled", False):
+        return Accelerator(mixed_precision=cfg.mixed_precision)
+
+    # DeepSpeed requested
+    if not _cuda_toolkit_available():
+        # fallback
+        write_json(os.path.join(run_dir, "deepspeed_disabled.json"), {
+            "requested": True,
+            "enabled": False,
+            "reason": "CUDA toolkit not found (CUDA_HOME/CUDA_PATH and nvcc missing). "
+                      "module load cuda or export CUDA_HOME, or run without deepspeed.",
+            "CUDA_HOME": os.environ.get("CUDA_HOME"),
+            "CUDA_PATH": os.environ.get("CUDA_PATH"),
+            "nvcc": shutil.which("nvcc"),
+        })
+        return Accelerator(mixed_precision=cfg.mixed_precision)
+
+    # Try building deepspeed plugin
+    try:
+        from accelerate.utils import DeepSpeedPlugin
+        with open(cfg.deepspeed_config_path, "r") as f:
+            ds_cfg = json.load(f)
+        ds_plugin = DeepSpeedPlugin(hf_ds_config=ds_cfg)
+        return Accelerator(mixed_precision=cfg.mixed_precision, deepspeed_plugin=ds_plugin)
+    except Exception as e:
+        write_json(os.path.join(run_dir, "deepspeed_disabled.json"), {
+            "requested": True,
+            "enabled": False,
+            "reason": "DeepSpeed failed to import/initialize; falling back to non-DeepSpeed",
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+        })
+        return Accelerator(mixed_precision=cfg.mixed_precision)
 
 @dataclass
 class Week4Config:
@@ -171,17 +223,7 @@ def bench_throughput_single(
 
     model, _ = maybe_apply_lora(model, cfg)
 
-    ds_cfg = None
-    if cfg.deepspeed_enabled:
-        with open(cfg.deepspeed_config_path, "r") as f:
-            ds_cfg = json.load(f)
-        from accelerate import Accelerator
-        from accelerate.utils import DeepSpeedPlugin
-        ds_plugin = DeepSpeedPlugin(hf_ds_config=ds_cfg)
-        accelerator = Accelerator(mixed_precision=cfg.mixed_precision, deepspeed_plugin=ds_plugin)
-    else:
-        from accelerate import Accelerator
-        accelerator = Accelerator(mixed_precision=cfg.mixed_precision)
+    accelerator = _make_accelerator(cfg, run_dir)
 
     _, _, dl_train, _ = build_loaders(task, tokenizer, cfg, micro_batch=micro_batch)
 
@@ -338,17 +380,7 @@ def train_and_eval_week4(
 
     model, lora_cfg = maybe_apply_lora(model, cfg)
 
-    ds_cfg = None
-    if cfg.deepspeed_enabled:
-        with open(cfg.deepspeed_config_path, "r") as f:
-            ds_cfg = json.load(f)
-        from accelerate import Accelerator
-        from accelerate.utils import DeepSpeedPlugin
-        ds_plugin = DeepSpeedPlugin(hf_ds_config=ds_cfg)
-        accelerator = Accelerator(mixed_precision=cfg.mixed_precision, deepspeed_plugin=ds_plugin)
-    else:
-        from accelerate import Accelerator
-        accelerator = Accelerator(mixed_precision=cfg.mixed_precision)
+    accelerator = _make_accelerator(cfg, run_dir)
 
     _, _, dl_train, _ = build_loaders(task, tokenizer, cfg, micro_batch=max_micro)
 
