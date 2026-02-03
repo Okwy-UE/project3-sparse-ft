@@ -1,114 +1,128 @@
+# src/data/phoenix_sft_tasks.py
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Any, Tuple, Optional
-
-# HF dataset IDs (Phoenix-aligned task suite)
-BOOLQ_DATASET = ("google/boolq", None)
-HELLASWAG_DATASET = ("Rowan/hellaswag", "default")
-GSM8K_DATASET = ("openai/gsm8k", "main")
-
+from typing import Any, Dict, Optional, Tuple, Callable
+import re
 
 @dataclass(frozen=True)
 class TaskSpec:
-    name: str
+    # (path, name) for datasets.load_dataset(path, name)
     dataset_id: Tuple[str, Optional[str]]
     train_split: str
     eval_split: str
+    # example -> (prompt, target)
+    formatter: Callable[[Dict[str, Any]], Tuple[str, str]]
 
+def _boolq_formatter(ex: Dict[str, Any]) -> Tuple[str, str]:
+    passage = ex["passage"].strip()
+    question = ex["question"].strip()
+    ans = "yes" if bool(ex["answer"]) else "no"
+    prompt = (
+        "### Passage:\n"
+        f"{passage}\n\n"
+        "### Question:\n"
+        f"{question}\n\n"
+        "### Answer (yes/no):\n"
+    )
+    target = f"{ans}\n"
+    return prompt, target
+
+def _hellaswag_formatter(ex: Dict[str, Any]) -> Tuple[str, str]:
+    # Rowan/hellaswag: ctx + endings + label (string "0"-"3")
+    ctx = ex["ctx"].strip()
+    endings = ex.get("endings", [])
+    endings = [e.strip() for e in endings]
+    label = int(ex["label"]) if str(ex.get("label", "")).strip() != "" else -1
+    letters = ["A", "B", "C", "D"]
+    opts = "\n".join([f"{letters[i]}) {endings[i]}" for i in range(min(4, len(endings)))])
+    prompt = (
+        "### Context:\n"
+        f"{ctx}\n\n"
+        "### Choose the best ending:\n"
+        f"{opts}\n\n"
+        "### Answer (A/B/C/D):\n"
+    )
+    target = f"{letters[label]}\n" if 0 <= label < 4 else "A\n"
+    return prompt, target
+
+def _gsm8k_formatter(ex: Dict[str, Any]) -> Tuple[str, str]:
+    # openai/gsm8k main: answer contains rationale + "#### <final>"
+    q = ex["question"].strip()
+    a = ex["answer"].strip()
+    prompt = (
+        "### Problem:\n"
+        f"{q}\n\n"
+        "### Solution:\n"
+    )
+    # Train on full rationale + final, to match common GSM8K SFT.
+    target = f"{a}\n"
+    return prompt, target
 
 TASKS: Dict[str, TaskSpec] = {
-    "boolq": TaskSpec("boolq", BOOLQ_DATASET, "train", "validation"),
-    "hellaswag": TaskSpec("hellaswag", HELLASWAG_DATASET, "train", "validation"),
-    "gsm8k": TaskSpec("gsm8k", GSM8K_DATASET, "train", "test"),
+    "boolq": TaskSpec(
+        dataset_id=("google/boolq", None),
+        train_split="train",
+        eval_split="validation",
+        formatter=_boolq_formatter,
+    ),
+    "hellaswag": TaskSpec(
+        dataset_id=("Rowan/hellaswag", None),
+        train_split="train",
+        eval_split="validation",
+        formatter=_hellaswag_formatter,
+    ),
+    "gsm8k": TaskSpec(
+        dataset_id=("openai/gsm8k", "main"),
+        train_split="train",
+        eval_split="test",
+        formatter=_gsm8k_formatter,
+    ),
 }
 
-
-def format_example(task: str, ex: Dict[str, Any]) -> Tuple[str, str]:
+def build_sft_features(tokenizer, prompt: str, target: str, max_length: int) -> Dict[str, Any]:
     """
-    Returns (prompt, answer_text). The training text will be prompt+answer.
-    We keep answers short for BoolQ/HellaSwag to match classifier-style scoring.
+    SFT: loss only on target tokens.
+    Pads/truncates to fixed max_length (Week4 requires 2048).
     """
-    task = task.lower()
-    if task == "boolq":
-        # ex: question, passage, answer (bool)
-        prompt = (
-            f"Passage: {ex['passage']}\n"
-            f"Question: {ex['question']}\n"
-            f"Answer:"
-        )
-        answer = " yes" if bool(ex["answer"]) else " no"
-        return prompt, answer
-
-    if task == "hellaswag":
-        # ex: ctx, endings (list[str]), label (int 0..3)
-        endings = ex["endings"]
-        prompt = (
-            f"Context: {ex['ctx']}\n"
-            "Choose the most plausible ending:\n"
-            f"A) {endings[0]}\n"
-            f"B) {endings[1]}\n"
-            f"C) {endings[2]}\n"
-            f"D) {endings[3]}\n"
-            "Answer:"
-        )
-        label = int(ex["label"])
-        answer = f" {'ABCD'[label]}"
-        return prompt, answer
-
-    if task == "gsm8k":
-        # ex: question, answer (contains reasoning + #### final)
-        prompt = f"Question: {ex['question']}\nAnswer:"
-        answer = "\n" + ex["answer"].strip()
-        return prompt, answer
-
-    raise ValueError(f"Unknown task: {task}")
-
-
-def build_sft_features(
-    tokenizer,
-    prompt: str,
-    answer: str,
-    max_length: int,
-) -> Dict[str, Any]:
-    """
-    Tokenize to fixed max_length with padding='max_length' so throughput is comparable.
-    Labels: ignore prompt tokens + pad tokens.
-    """
+    # Ensure pad token exists (LLaMA-family often lacks it)
     if tokenizer.pad_token_id is None:
-        # LLaMA-family frequently has no pad token by default
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Tokenize prompt and full text without special tokens (we control BOS/EOS)
     prompt_ids = tokenizer(prompt, add_special_tokens=False).input_ids
-    full_ids = tokenizer(prompt + answer, add_special_tokens=False).input_ids
+    full_ids = tokenizer(prompt + target, add_special_tokens=False).input_ids
+    # Add EOS
+    full_ids = (full_ids + [tokenizer.eos_token_id])[:max_length]
 
-    # Add BOS if model uses it; always terminate with EOS if available.
-    bos = [tokenizer.bos_token_id] if tokenizer.bos_token_id is not None else []
-    eos = [tokenizer.eos_token_id] if tokenizer.eos_token_id is not None else []
+    # Labels: mask prompt portion
+    labels = [-100] * len(full_ids)
+    p = min(len(prompt_ids), len(full_ids))
+    for i in range(p, len(full_ids)):
+        labels[i] = full_ids[i]
 
-    input_ids = bos + full_ids + eos
-    prompt_len = len(bos) + len(prompt_ids)  # prompt length within input_ids
-
-    # Truncate
-    input_ids = input_ids[:max_length]
     # Pad
-    attn_mask = [1] * len(input_ids)
-    if len(input_ids) < max_length:
-        pad_len = max_length - len(input_ids)
-        input_ids = input_ids + [tokenizer.pad_token_id] * pad_len
-        attn_mask = attn_mask + [0] * pad_len
-
-    # Labels: copy input_ids, but mask prompt portion and pad
-    labels = input_ids.copy()
-    for i in range(min(prompt_len, max_length)):
-        labels[i] = -100
-    for i, m in enumerate(attn_mask):
-        if m == 0:
-            labels[i] = -100
+    pad_len = max_length - len(full_ids)
+    input_ids = full_ids + [tokenizer.pad_token_id] * pad_len
+    attention_mask = [1] * len(full_ids) + [0] * pad_len
+    labels = labels + [-100] * pad_len
 
     return {
         "input_ids": input_ids,
-        "attention_mask": attn_mask,
+        "attention_mask": attention_mask,
         "labels": labels,
     }
+
+_FINAL_NUM_RE = re.compile(r"####\s*([-+]?\d+)")
+_LAST_INT_RE = re.compile(r"([-+]?\d+)\s*$")
+
+def extract_gsm8k_final(text: str) -> Optional[str]:
+    """
+    Prefer GSM8K canonical '#### <int>' format; else last integer in string.
+    """
+    m = _FINAL_NUM_RE.search(text)
+    if m:
+        return m.group(1)
+    m = _LAST_INT_RE.search(text.strip())
+    if m:
+        return m.group(1)
+    return None
