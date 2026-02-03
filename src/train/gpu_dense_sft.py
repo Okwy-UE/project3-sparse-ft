@@ -197,7 +197,7 @@ def bench_throughput_single(
     num_warmup = max(1, int(cfg.warmup_ratio * cfg.max_steps))
     sched = get_cosine_schedule_with_warmup(
         optim,
-        num_warmup_training_steps=num_warmup,
+        num_warmup_steps=num_warmup,
         num_training_steps=cfg.max_steps,
     )
 
