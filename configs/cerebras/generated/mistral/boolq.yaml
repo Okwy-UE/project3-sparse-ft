@@ -61,6 +61,7 @@ trainer:
     checkpoint:
       steps: 1000000
       save_initial_checkpoint: false
+      disable_strict_checkpoint_loading: true
     logging:
       log_steps: 10
     callbacks:
