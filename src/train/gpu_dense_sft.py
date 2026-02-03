@@ -20,6 +20,17 @@ from src.utils.run_logging import write_json
 import shutil
 import traceback
 
+from tqdm.auto import tqdm
+import sys
+
+def is_main_process(accelerator) -> bool:
+    return getattr(accelerator, "is_main_process", True)
+
+def tqdm_if_main(accelerator, iterable, **kwargs):
+    # Avoid multi-bar spam + avoid aggressive log updates in Slurm output
+    disable = (not is_main_process(accelerator)) or (not sys.stdout.isatty())
+    return tqdm(iterable, disable=disable, mininterval=2.0, **kwargs)
+
 def _cuda_toolkit_available() -> bool:
     """
     DeepSpeed op loader needs CUDA toolkit (CUDA_HOME and nvcc).
@@ -257,7 +268,7 @@ def bench_throughput_single(
     tokens_per_step = micro_batch * accelerator.num_processes * cfg.max_seq_len
 
     it = iter(dl_train)
-    for step in range(total_steps):
+    for step in tqdm_if_main(accelerator, range(cfg.max_steps), desc="train"):
         batch = next(it)
         t0 = time.perf_counter()
         with accelerator.accumulate(model):
@@ -412,7 +423,7 @@ def train_and_eval_week4(
     t_train0 = time.perf_counter()
 
     it = iter(dl_train)
-    for step in range(cfg.max_steps):
+    for step in tqdm_if_main(accelerator, range(total_steps), desc=f"bench(bs={micro_batch})"):
         batch = next(it)
         out = model(
             input_ids=batch["input_ids"],
