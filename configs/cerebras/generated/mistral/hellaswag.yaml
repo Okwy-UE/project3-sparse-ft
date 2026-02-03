@@ -6,7 +6,7 @@ trainer:
     seed: 1
     model:
       name: mistral
-      vocab_size: 32000
+      vocab_size: 32768
       hidden_size: 4096
       position_embedding_type: rotary
       rotary_dim: 128
