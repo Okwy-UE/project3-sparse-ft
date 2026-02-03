@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+from typing import Any
 import json
 import os
 import time
@@ -189,8 +190,12 @@ def build_loaders(task: str, tokenizer, cfg: Week4Config, micro_batch: int):
     ds_train = ds_train.map(tok_fn, remove_columns=ds_train.column_names, num_proc=cfg.num_proc)
     ds_eval = ds_eval.map(tok_fn, remove_columns=ds_eval.column_names, num_proc=cfg.num_proc)
 
-    dl_train = DataLoader(ds_train, batch_size=micro_batch, shuffle=True, drop_last=True)
-    dl_eval = DataLoader(ds_eval, batch_size=micro_batch, shuffle=False, drop_last=False)
+    cols = ["input_ids", "attention_mask", "labels"]
+    ds_train.set_format(type="torch", columns=cols)
+    ds_eval.set_format(type="torch", columns=cols)
+
+    dl_train = DataLoader(ds_train, batch_size=micro_batch, shuffle=True, drop_last=True, num_workers=2, pin_memory=True)
+    dl_eval = DataLoader(ds_eval, batch_size=micro_batch, shuffle=False, drop_last=False, num_workers=2, pin_memory=True)
     return ds_train, ds_eval, dl_train, dl_eval
 
 
