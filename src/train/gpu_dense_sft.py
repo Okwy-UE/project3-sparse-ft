@@ -484,6 +484,26 @@ def train_and_eval_week4(
         "tokens_total": tokens_total,
     })
 
+        if hasattr(accelerator, "free_memory"):
+            accelerator.free_memory()
+    except Exception:
+        pass
+
+    try:
+        del sched
+    except Exception:
+        pass
+    try:
+        del optim
+    except Exception:
+        pass
+    try:
+        del model
+    except Exception:
+        pass
+    torch.cuda.empty_cache()
+    gc.collect()
+
     # ---- Eval (lm-eval-harness)
     eval_out = {}
     if cfg.eval_use_lm_eval and accelerator.is_main_process:
