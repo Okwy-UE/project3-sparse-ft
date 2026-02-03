@@ -37,7 +37,7 @@ peft:
 # throughput scaling: at least 3 points
 throughput:
   warmup_steps: 5
-  measure_steps: 20
+  measure_steps: 10
   points: 3
 
 # dataset caps (keep runs manageable + consistent)
