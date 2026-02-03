@@ -19,6 +19,7 @@ def main():
     ap.add_argument("--task", required=True, choices=["boolq", "hellaswag", "gsm8k"])
     ap.add_argument("--model_id", default=None, help="Override HF model id")
     ap.add_argument("--contract", default="configs/contracts/week4_dense_h100.yaml")
+    ap.add_argument("--deepspeed", default="auto", choices=["auto","on","off"])
     ap.add_argument("--runs_root", default="results/runs")
     ap.add_argument("--registry_csv", default="results/run_registry.csv")
     ap.add_argument("--notes", default="")
@@ -27,6 +28,23 @@ def main():
     model_id = args.model_id or DEFAULT_MODELS[args.model]
     run_id = make_run_id(prefix=f"week4-gpu-dense-{args.model}-{args.task}")
     run_dir = make_run_dir(args.runs_root, run_id)
+
+    # Optional: override contract deepspeed.enabled at runtime
+    # auto => on for mixtral, off otherwise
+    import yaml
+    with open(args.contract, "r") as f:
+        contract_obj = yaml.safe_load(f)
+    if args.deepspeed == "on":
+        contract_obj["deepspeed"]["enabled"] = True
+    elif args.deepspeed == "off":
+        contract_obj["deepspeed"]["enabled"] = False
+    else:
+        # auto
+        contract_obj["deepspeed"]["enabled"] = (args.model == "mixtral-8x7b")
+    # write resolved contract into run_dir for provenance
+    resolved_contract_path = os.path.join(run_dir, "week4_contract_runtime.yaml")
+    with open(resolved_contract_path, "w") as f:
+        yaml.safe_dump(contract_obj, f, sort_keys=False)
 
     # snapshot env early
     snapshot_env(run_dir)
@@ -42,7 +60,7 @@ def main():
     run_result = train_and_eval_week4(
         model_id=model_id,
         task=args.task,
-        contract_yaml=args.contract,
+        contract_yaml=resolved_contract_path,
         run_dir=run_dir,
     )
 
