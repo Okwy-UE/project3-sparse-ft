@@ -198,8 +198,8 @@ def build_loaders(task: str, tokenizer, cfg: Week4Config, micro_batch: int):
     ds_eval = build_sft_dataset(task, "eval", max_samples=cfg.max_eval_samples, seed=cfg.seed)
 
     tok_fn = make_tokenize_fn(tokenizer, cfg.max_seq_len)
-    ds_train = ds_train.map(tok_fn, remove_columns=ds_train.column_names, num_proc=cfg.num_proc)
-    ds_eval = ds_eval.map(tok_fn, remove_columns=ds_eval.column_names, num_proc=cfg.num_proc)
+    ds_train = ds_train.map(tok_fn, remove_columns=ds_train.column_names, num_proc=cfg.num_proc, desc="tokenize train")
+    ds_eval = ds_eval.map(tok_fn, remove_columns=ds_eval.column_names, num_proc=cfg.num_proc, desc="tokenize train")
 
     cols = ["input_ids", "attention_mask", "labels"]
     ds_train.set_format(type="torch", columns=cols)
