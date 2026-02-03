@@ -373,7 +373,7 @@ def train_and_eval_week4(
     write_json(os.path.join(run_dir, "week4_contract_resolved.json"), contract)
 
     # ---- Auto micro-batch
-    max_micro = auto_find_max_micro_batch(model_id, task, run_dir, cfg, start=16, cap=64)
+    max_micro = auto_find_max_micro_batch(model_id, task, run_dir, cfg, start=2, cap=8)
     tp_points = pick_throughput_points(max_micro, cfg.tp_points)
 
     # ---- Throughput bench
