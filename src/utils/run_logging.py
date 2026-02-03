@@ -1,131 +1,167 @@
-# src/utils/run_logging.py
-from __future__ import annotations
-
-import argparse
 import csv
 import json
 import os
-import platform
+import socket
 import subprocess
 import time
-from pathlib import Path
+from dataclasses import dataclass, asdict
 from typing import Any, Dict, Optional
 
-REGISTRY_DEFAULT = Path("results/run_registry.csv")
+try:
+    import fcntl  # linux-only, which is fine for HPC
+except Exception:
+    fcntl = None
 
-def _try(cmd: list[str]) -> str:
+
+def _now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
+
+
+def _run(cmd: str) -> str:
     try:
-        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode("utf-8", "ignore")
-        return out.strip()
+        out = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT)
+        return out.decode("utf-8", errors="replace").strip()
     except Exception as e:
-        return f"<err:{e}>"
+        return f"<error: {e}>"
 
-def snapshot_env(run_dir: Path) -> None:
-    run_dir.mkdir(parents=True, exist_ok=True)
-    info = {
-        "timestamp": time.time(),
-        "host": platform.node(),
-        "platform": platform.platform(),
-        "python": _try(["python", "--version"]),
-        "git_rev": _try(["git", "rev-parse", "HEAD"]),
-        "git_status": _try(["git", "status", "--porcelain"]),
-        "nvidia_smi": _try(["nvidia-smi"]),
-        "pip_freeze": _try(["python", "-m", "pip", "freeze"]),
-        "env": {k: os.environ.get(k) for k in [
-            "SLURM_JOB_ID","SLURM_JOB_NODELIST","SLURM_NTASKS","SLURM_GPUS",
-            "CUDA_VISIBLE_DEVICES","HF_HOME","HF_DATASETS_CACHE","TRANSFORMERS_CACHE",
-            "NCCL_DEBUG","NCCL_IB_DISABLE","NCCL_SOCKET_IFNAME"
-        ]},
+
+def get_host_meta() -> Dict[str, Any]:
+    return {
+        "hostname": socket.gethostname(),
+        "user": os.environ.get("USER", ""),
+        "cwd": os.getcwd(),
+        "time": _now_iso(),
     }
-    (run_dir / "env_snapshot.json").write_text(json.dumps(info, indent=2, sort_keys=True))
 
-def load_json(p: Path) -> Optional[Dict[str, Any]]:
-    if not p.exists():
-        return None
-    return json.loads(p.read_text())
 
-def collect_record(run_dir: Path) -> Dict[str, Any]:
-    meta = load_json(run_dir / "run_meta.json") or {}
-    throughput = load_json(run_dir / "throughput.json") or {}
-    train = load_json(run_dir / "train_summary.json") or {}
-    evalm = load_json(run_dir / "eval_metrics.json") or {}
+def get_git_meta() -> Dict[str, Any]:
+    return {
+        "git_commit": _run("git rev-parse HEAD"),
+        "git_status": _run("git status --porcelain"),
+        "git_branch": _run("git rev-parse --abbrev-ref HEAD"),
+    }
 
-    record: Dict[str, Any] = {}
-    record.update(meta)
 
-    # Merge known metric payloads (presence depends on run kind)
-    for k, v in throughput.items():
-        record[f"throughput.{k}"] = v
-    for k, v in train.items():
-        record[f"train.{k}"] = v
-    for k, v in evalm.items():
-        record[f"eval.{k}"] = v
+def get_gpu_meta() -> Dict[str, Any]:
+    # works on DGX nodes
+    q = "name,memory.total,driver_version"
+    cmd = f"nvidia-smi --query-gpu={q} --format=csv,noheader"
+    raw = _run(cmd)
+    gpus = []
+    if raw and not raw.startswith("<error:"):
+        for line in raw.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 3:
+                gpus.append({"name": parts[0], "mem_total": parts[1], "driver": parts[2]})
+    return {
+        "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+        "gpus": gpus,
+        "nvidia_smi": raw,
+    }
 
-    record["run_dir"] = str(run_dir)
-    record["registered_at"] = time.time()
-    return record
 
-def append_registry(record: Dict[str, Any], registry_path: Path = REGISTRY_DEFAULT) -> None:
-    registry_path.parent.mkdir(parents=True, exist_ok=True)
-    exists = registry_path.exists()
+def write_json(path: str, obj: Any) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(obj, f, indent=2, sort_keys=True)
 
-    # Stable column order: union of existing header + new keys
-    if exists:
-        with registry_path.open("r", newline="") as f:
-            reader = csv.reader(f)
-            header = next(reader)
-        cols = list(header)
-        for k in record.keys():
-            if k not in cols:
-                cols.append(k)
-    else:
-        cols = list(record.keys())
 
-    # If expanding columns, rewrite file with new header
-    if exists:
-        with registry_path.open("r", newline="") as f:
-            rows = list(csv.DictReader(f))
-        for r in rows:
-            for c in cols:
-                r.setdefault(c, "")
-        for c in cols:
-            record.setdefault(c, "")
-        with registry_path.open("w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=cols)
+def read_json(path: str) -> Any:
+    with open(path, "r") as f:
+        return json.load(f)
+
+
+def ensure_dir(path: str) -> None:
+    os.makedirs(path, exist_ok=True)
+
+
+def make_run_id(prefix: str) -> str:
+    # stable + sortable
+    return f"{prefix}-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+
+
+def make_run_dir(root: str, run_id: str) -> str:
+    d = os.path.join(root, run_id)
+    ensure_dir(d)
+    return d
+
+
+def snapshot_env(run_dir: str) -> None:
+    meta = {
+        "host": get_host_meta(),
+        "git": get_git_meta(),
+        "gpu": get_gpu_meta(),
+        "pip_freeze": _run("python -m pip freeze | sort"),
+        "python": _run("python -V"),
+        "torch": _run("python - << 'PY'\nimport torch\nprint(torch.__version__)\nprint(torch.version.cuda)\nPY"),
+    }
+    write_json(os.path.join(run_dir, "env_snapshot.json"), meta)
+
+
+def _lock_file(f):
+    if fcntl is None:
+        return
+    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+
+
+def _unlock_file(f):
+    if fcntl is None:
+        return
+    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+def append_run_registry(csv_path: str, row: Dict[str, Any]) -> None:
+    """
+    Appends a row to results/run_registry.csv without assuming a fixed schema.
+    - If the file exists, we preserve existing columns and fill what we can.
+    - If new keys appear, we expand the header (rewrite file) safely.
+    """
+    ensure_dir(os.path.dirname(csv_path))
+
+    # Normalize values to strings for CSV
+    row_str = {k: ("" if v is None else str(v)) for k, v in row.items()}
+
+    if not os.path.exists(csv_path):
+        with open(csv_path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(row_str.keys()))
             w.writeheader()
-            w.writerows(rows)
-            w.writerow(record)
-    else:
-        for c in cols:
-            record.setdefault(c, "")
-        with registry_path.open("w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=cols)
-            w.writeheader()
-            w.writerow(record)
-
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    sub = ap.add_subparsers(dest="cmd", required=True)
-
-    p_reg = sub.add_parser("register", help="Append a run_dir into results/run_registry.csv")
-    p_reg.add_argument("--run_dir", required=True)
-    p_reg.add_argument("--registry", default=str(REGISTRY_DEFAULT))
-
-    p_snap = sub.add_parser("snapshot", help="Write env snapshot into run_dir")
-    p_snap.add_argument("--run_dir", required=True)
-
-    args = ap.parse_args()
-
-    run_dir = Path(args.run_dir)
-
-    if args.cmd == "snapshot":
-        snapshot_env(run_dir)
+            w.writerow(row_str)
         return
 
-    if args.cmd == "register":
-        rec = collect_record(run_dir)
-        append_registry(rec, Path(args.registry))
+    # Read existing rows + header, expand if needed
+    with open(csv_path, "r", newline="") as f:
+        _lock_file(f)
+        try:
+            r = csv.DictReader(f)
+            existing_fields = list(r.fieldnames or [])
+            existing_rows = list(r)
+        finally:
+            _unlock_file(f)
+
+    new_fields = existing_fields[:]
+    for k in row_str.keys():
+        if k not in new_fields:
+            new_fields.append(k)
+
+    # If no schema change, append directly
+    if new_fields == existing_fields:
+        with open(csv_path, "a", newline="") as f:
+            _lock_file(f)
+            try:
+                w = csv.DictWriter(f, fieldnames=existing_fields)
+                w.writerow({k: row_str.get(k, "") for k in existing_fields})
+            finally:
+                _unlock_file(f)
         return
 
-if __name__ == "__main__":
-    main()
+    # Otherwise rewrite with expanded header
+    existing_rows.append({k: row_str.get(k, "") for k in new_fields})
+    with open(csv_path, "w", newline="") as f:
+        _lock_file(f)
+        try:
+            w = csv.DictWriter(f, fieldnames=new_fields)
+            w.writeheader()
+            for rr in existing_rows:
+                w.writerow({k: rr.get(k, "") for k in new_fields})
+        finally:
+            _unlock_file(f)
