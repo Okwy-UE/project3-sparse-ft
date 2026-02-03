@@ -1,0 +1,61 @@
+seed: 1337
+max_seq_len: 2048
+
+# training budget (tune if needed, but keep consistent across CS-3 vs GPU when possible)
+max_steps:
+  boolq: 600
+  hellaswag: 600
+  gsm8k: 800
+
+warmup_ratio: 0.03
+lr: 2.0e-4
+weight_decay: 0.0
+adam_beta1: 0.9
+adam_beta2: 0.95
+adam_eps: 1.0e-8
+grad_clip_norm: 1.0
+
+# precision
+mixed_precision: bf16
+
+# LoRA baseline (Phoenix-style "dense + LoRA")
+peft:
+  mode: lora
+  r: 16
+  alpha: 64
+  dropout: 0.05
+  # Phoenix commonly targets proj modules (exact names vary by architecture)
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - up_proj
+    - down_proj
+    - gate_proj
+
+# throughput scaling: at least 3 points
+throughput:
+  warmup_steps: 5
+  measure_steps: 20
+  points: 3
+
+# dataset caps (keep runs manageable + consistent)
+data:
+  max_train_samples: null   # set an int to cap, or null for full train split
+  max_eval_samples: 2048    # cap eval docs for speed & consistency
+  num_proc: 8
+
+# deepspeed (recommended for Mixtral; optional for 7B/8B)
+deepspeed:
+  enabled: true
+  config_path: configs/gpu/deepspeed_zero3_bf16.json
+
+# evaluation harness
+eval:
+  use_lm_eval: true
+  tasks_map:
+    boolq: boolq
+    hellaswag: hellaswag
+    gsm8k: gsm8k
+  batch_size: auto
