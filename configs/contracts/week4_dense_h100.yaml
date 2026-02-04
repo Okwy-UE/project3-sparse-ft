@@ -58,4 +58,4 @@ eval:
     boolq: boolq
     hellaswag: hellaswag
     gsm8k: gsm8k
-  batch_size: auto
+  batch_size: 1
