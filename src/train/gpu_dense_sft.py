@@ -472,7 +472,7 @@ def train_and_eval_week4(
     # ---- Throughput bench
     tp_metrics = []
     for b in tp_points:
-        m = bench_throughput_single(model_id, task, run_dir, cfg, micro_batch=b. bench_ctx=bench_ctx)
+        m = bench_throughput_single(model_id, task, run_dir, cfg, micro_batch=b, bench_ctx=bench_ctx)
         tp_metrics.append(m)
 
     write_json(os.path.join(run_dir, "throughput_scaling.json"), {"points": tp_metrics})
