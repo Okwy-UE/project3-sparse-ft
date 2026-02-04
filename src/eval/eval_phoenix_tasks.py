@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import os
+import pathlib
 import torch
 from typing import Dict, Any, List, Optional
 
@@ -37,6 +38,8 @@ def run_lm_eval_harness(
 
     if peft_adapter_path is not None:
         model_args_parts.append(f"peft={peft_adapter_path}")
+        peft_abs = str(pathlib.Path(peft_adapter_path).resolve())
+        model_args_parts.append(f"peft={peft_abs}")
     if extra_model_args:
         for k, v in extra_model_args.items():
             if k=="dtype":
