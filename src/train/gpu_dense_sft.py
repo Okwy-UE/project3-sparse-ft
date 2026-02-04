@@ -568,12 +568,12 @@ def train_and_eval_week4(
     if accelerator.is_main_process:
         os.makedirs(adapter_dir, exist_ok=True)
         # save PEFT adapter if present; otherwise full model
-        if cfg.peft_mode == "lora":
-            model_to_save = accelerator.unwrap_model(model)
-            model_to_save.save_pretrained(adapter_dir)
-        else:
-            model_to_save = accelerator.unwrap_model(model)
-            model_to_save.save_pretrained(adapter_dir)
+        try:
+            model.save_pretrained(adapter_dir)
+        except Exception:
+            # Fallback: save full state dict if something odd happens
+            torch.save(model.state_dict(), os.path.join(adapter_dir, "pytorch_model.bin"))
+        
         tokenizer.save_pretrained(adapter_dir)
 
     accelerator.wait_for_everyone()
