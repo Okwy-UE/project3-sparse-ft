@@ -31,6 +31,55 @@ def tqdm_if_main(accelerator, iterable, **kwargs):
     disable = (not is_main_process(accelerator)) or (not sys.stdout.isatty())
     return tqdm(iterable, disable=disable, mininterval=2.0, **kwargs)
 
+def _hard_cuda_cleanup(objs: Dict[str, Any], accelerator=None) -> None:
+    """
+    Try very hard to return GPU memory to the driver before running lm-eval.
+    On some stacks, del(model) is not sufficient because wrappers keep references.
+    """
+    try:
+        if accelerator is not None:
+            try:
+                accelerator.wait_for_everyone()
+            except Exception:
+                pass
+            # accelerate >= 0.26
+            if hasattr(accelerator, "free_memory"):
+                try:
+                    accelerator.free_memory()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Drop references we know about
+    for k in list(objs.keys()):
+        try:
+            del objs[k]
+        except Exception:
+            pass
+
+    # Drop accelerator last (it can hold model/optim refs)
+    try:
+        if accelerator is not None:
+            del accelerator
+    except Exception:
+        pass
+
+    # Force GC + CUDA cache cleanup
+    try:
+        gc.collect()
+    except Exception:
+        pass
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+        try:
+            torch.cuda.ipc_collect()
+        except Exception:
+            pass
+
 def _cuda_toolkit_available() -> bool:
     """
     DeepSpeed op loader needs CUDA toolkit (CUDA_HOME and nvcc).
@@ -370,6 +419,8 @@ def train_and_eval_week4(
     cfg = resolve_week4_config(contract, task)
     set_seed(cfg.seed)
 
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     write_json(os.path.join(run_dir, "week4_contract_resolved.json"), contract)
 
     # ---- Auto micro-batch
@@ -403,7 +454,7 @@ def train_and_eval_week4(
 
     accelerator = _make_accelerator(cfg, run_dir)
 
-    _, _, dl_train, _ = build_loaders(task, tokenizer, cfg, micro_batch=max_micro)
+    ds_train, ds_eval, dl_train, dl_eval = build_loaders(task, tokenizer, cfg, micro_batch=max_micro)
 
     optim = torch.optim.AdamW(
         [p for p in model.parameters() if p.requires_grad],
@@ -484,30 +535,24 @@ def train_and_eval_week4(
         "tokens_total": tokens_total,
     })
 
-    try:
-        if hasattr(accelerator, "free_memory"):
-            accelerator.free_memory()
-    except Exception:
-        pass
-
-    try:
-        del sched
-    except Exception:
-        pass
-    try:
-        del optim
-    except Exception:
-        pass
-    try:
-        del model
-    except Exception:
-        pass
-    torch.cuda.empty_cache()
-    gc.collect()
+    # ---- HARD cleanup BEFORE lm-eval-harness loads a new model
+    _hard_cuda_cleanup(
+        {
+            "model": model,
+            "optim": optim,
+            "sched": sched,
+            "dl_train": dl_train,
+            "dl_eval": dl_eval,
+            "ds_train": ds_train,
+            "ds_eval": ds_eval,
+            "tokenizer": tokenizer,
+        },
+        accelerator=accelerator,
+    )
 
     # ---- Eval (lm-eval-harness)
     eval_out = {}
-    if cfg.eval_use_lm_eval and accelerator.is_main_process:
+    if cfg.eval_use_lm_eval:
         eval_path = os.path.join(run_dir, "lm_eval.json")
         eval_out = run_lm_eval_harness(
             base_model_id=model_id,
@@ -518,8 +563,38 @@ def train_and_eval_week4(
             device=eval_device,
             extra_model_args=None,
         )
+    try:
+        eval_out = run_lm_eval_harness(
+            base_model_id=model_id,
+            peft_adapter_path=adapter_dir if cfg.peft_mode == "lora" else None,
+            tasks=[cfg.eval_task_name],
+            out_json_path=eval_path,
+            batch_size=cfg.eval_batch_size,
+            device=eval_device,
+            extra_model_args=None,
+        )
+    except torch.cuda.OutOfMemoryError as e:
+        # Record GPU OOM and fall back to CPU so the run completes.
+        write_json(os.path.join(run_dir, "lm_eval_oom.json"), {
+            "device_requested": eval_device,
+            "fallback_device": "cpu",
+            "error": str(e),
+        })
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+        eval_out = run_lm_eval_harness(
+            base_model_id=model_id,
+            peft_adapter_path=adapter_dir if cfg.peft_mode == "lora" else None,
+            tasks=[cfg.eval_task_name],
+            out_json_path=eval_path,
+            batch_size="1" if cfg.eval_batch_size == "auto" else cfg.eval_batch_size,
+            device="cpu",
+            extra_model_args=None,
+        )
 
-    accelerator.wait_for_everyone()
+    # accelerator.wait_for_everyone()
 
     run_result = {
         "model_id": model_id,
