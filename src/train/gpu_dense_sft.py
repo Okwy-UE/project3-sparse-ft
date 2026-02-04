@@ -123,7 +123,7 @@ def _make_accelerator(cfg, run_dir: str):
     from accelerate import Accelerator
 
     if not getattr(cfg, "deepspeed_enabled", False):
-        return Accelerator(mixed_precision=cfg.mixed_precision)
+        return Accelerator(mixed_precision="fp16")
 
     # DeepSpeed requested
     if not _cuda_toolkit_available():
@@ -137,7 +137,7 @@ def _make_accelerator(cfg, run_dir: str):
             "CUDA_PATH": os.environ.get("CUDA_PATH"),
             "nvcc": shutil.which("nvcc"),
         })
-        return Accelerator(mixed_precision=cfg.mixed_precision)
+        return Accelerator(mixed_precision="fp16")
 
     # Try building deepspeed plugin
     try:
@@ -145,7 +145,7 @@ def _make_accelerator(cfg, run_dir: str):
         with open(cfg.deepspeed_config_path, "r") as f:
             ds_cfg = json.load(f)
         ds_plugin = DeepSpeedPlugin(hf_ds_config=ds_cfg)
-        return Accelerator(mixed_precision=cfg.mixed_precision, deepspeed_plugin=ds_plugin)
+        return Accelerator(mixed_precision="fp16", deepspeed_plugin=ds_plugin)
     except Exception as e:
         write_json(os.path.join(run_dir, "deepspeed_disabled.json"), {
             "requested": True,
@@ -154,7 +154,7 @@ def _make_accelerator(cfg, run_dir: str):
             "error": str(e),
             "traceback": traceback.format_exc(),
         })
-        return Accelerator(mixed_precision=cfg.mixed_precision)
+        return Accelerator(mixed_precision="fp16")
 
 @dataclass
 class Week4Config:
@@ -307,7 +307,7 @@ def bench_throughput_single(
 
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
-        torch_dtype=torch_dtype,
+        torch_dtype=torch.float16,
         low_cpu_mem_usage=True,
     )
     model.config.use_cache = False
@@ -472,7 +472,7 @@ def train_and_eval_week4(
 
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
-        torch_dtype=torch_dtype,
+        torch_dtype=torch.float16,
         low_cpu_mem_usage=True,
     )
     model.config.use_cache = False
