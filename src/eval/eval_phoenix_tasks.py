@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import os
+import torch
 from typing import Dict, Any, List, Optional
 
 def run_lm_eval_harness(
@@ -24,11 +25,22 @@ def run_lm_eval_harness(
             f"Import error: {e}"
         )
 
-    model_args_parts = [f"pretrained={base_model_id}", 'dtype=bfloat16']
+    dtype = "float16"
+    if extra_model_args and "dtype" in extra_model_args:
+        dtype = extra_model_args["dtype"]
+
+    model_args_parts = [f"pretrained={base_model_id}", f"dtype={dtype}"]
+
+    # If multiple GPUs are visible and we're evaluating on CUDA, shard model across GPUs.
+    if device.startswith("cuda") and torch.cuda.device_count() > 1:
+        model_args_parts.append("device_map=auto")
+
     if peft_adapter_path is not None:
         model_args_parts.append(f"peft={peft_adapter_path}")
     if extra_model_args:
         for k, v in extra_model_args.items():
+            if k=="dtype":
+                continue
             model_args_parts.append(f"{k}={v}")
 
     model_args = ",".join(model_args_parts)
