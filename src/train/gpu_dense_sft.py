@@ -564,15 +564,11 @@ def train_and_eval_week4(
     train_tok_s = tokens_total / train_s if train_s > 0 else 0.0
 
     # ---- Save adapter (main process only)
-    adapter_dir = os.path.join(run_dir, "adapter")
+    adapter_dir = os.path.abspath(os.path.join(run_dir, "adapter"))
     if accelerator.is_main_process:
         os.makedirs(adapter_dir, exist_ok=True)
-        # save PEFT adapter if present; otherwise full model
-        try:
-            model.save_pretrained(adapter_dir)
-        except Exception:
-            # Fallback: save full state dict if something odd happens
-            torch.save(model.state_dict(), os.path.join(adapter_dir, "pytorch_model.bin"))
+        unwrapped = accelerator.unwrap_model(model)
+        unwrapped.save_pretrained(adapter_dir)
         
         tokenizer.save_pretrained(adapter_dir)
 
@@ -609,6 +605,17 @@ def train_and_eval_week4(
     if cfg.eval_use_lm_eval and (not torch.cuda.is_available() or accelerator.is_main_process):
         eval_path = os.path.join(run_dir, "lm_eval.json")
         try:
+            # Sanity check: adapter_config.json must exist for LoRA
+            if cfg.peft_mode == "lora":
+                cfg_path = os.path.join(adapter_dir, "adapter_config.json")
+                if not os.path.isfile(cfg_path):
+                    write_json(os.path.join(run_dir, "lm_eval_adapter_missing.json"), {
+                        "adapter_dir": adapter_dir,
+                        "missing": "adapter_config.json",
+                        "files": sorted(os.listdir(adapter_dir)) if os.path.isdir(adapter_dir) else None,
+                    })
+                    raise RuntimeError(f"adapter_config.json missing in {adapter_dir}")
+
             eval_out = run_lm_eval_harness(
             base_model_id=model_id,
             peft_adapter_path=adapter_dir if cfg.peft_mode == "lora" else None,
