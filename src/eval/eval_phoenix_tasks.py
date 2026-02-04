@@ -29,7 +29,7 @@ def run_lm_eval_harness(
     if extra_model_args and "dtype" in extra_model_args:
         dtype = extra_model_args["dtype"]
 
-    model_args_parts = [f"pretrained={base_model_id}", f"dtype={dtype}"]
+    model_args_parts = [f"pretrained={base_model_id}", f"dtype=float 16"]
 
     # If multiple GPUs are visible and we're evaluating on CUDA, shard model across GPUs.
     if device.startswith("cuda") and torch.cuda.device_count() > 1:
