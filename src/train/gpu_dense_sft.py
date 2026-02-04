@@ -477,6 +477,18 @@ def train_and_eval_week4(
 
     write_json(os.path.join(run_dir, "throughput_scaling.json"), {"points": tp_metrics})
 
+    try:
+        _hard_cuda_cleanup(
+            {
+                "bench_tokenizer": getattr(bench_ctx, "tokenizer", None),
+                "bench_model": getattr(bench_ctx, "model", None),
+            },
+            accelerator=getattr(bench_ctx, "accelerator", None),
+        )
+    except Exception:
+        pass
+    bench_ctx = None
+
     # ---- Final training run at max_micro (fresh model)
     torch.cuda.empty_cache()
     gc.collect()
