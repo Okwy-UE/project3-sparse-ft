@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import math
 from typing import Any
 import json
 import os
@@ -30,6 +31,31 @@ def tqdm_if_main(accelerator, iterable, **kwargs):
     # Avoid multi-bar spam + avoid aggressive log updates in Slurm output
     disable = (not is_main_process(accelerator)) or (not sys.stdout.isatty())
     return tqdm(iterable, disable=disable, mininterval=2.0, **kwargs)
+
+def _supports_bf16() -> bool:
+    """
+    BF16 is only supported on Ampere+ GPUs (SM80+). V100 (SM70) does NOT support bf16.
+    """
+    if not torch.cuda.is_available():
+        return False
+    major, minor = torch.cuda.get_device_capability(0)
+    return major >= 8
+
+def _effective_precision(cfg, run_dir: str):
+    """
+    Return (mixed_precision_str, torch_dtype) adjusted for hardware.
+    """
+    mp = cfg.mixed_precision
+    td = torch.bfloat16 if mp == "bf16" else torch.float16 if mp == "fp16" else torch.float32
+    if mp == "bf16" and not _supports_bf16():
+        mp = "fp16"
+        td = torch.float16
+        write_json(os.path.join(run_dir, "precision_override.json"), {
+            "requested_mixed_precision": cfg.mixed_precision,
+            "effective_mixed_precision": mp,
+            "reason": "GPU does not support bf16 (e.g., V100 SM70). Switching to fp16.",
+        })
+    return mp, td
 
 def _hard_cuda_cleanup(objs: Dict[str, Any], accelerator=None) -> None:
     """
@@ -273,6 +299,7 @@ def bench_throughput_single(
     torch.cuda.empty_cache()
     gc.collect()
     set_seed(cfg.seed)
+    mp, torch_dtype = _effective_precision(cfg, run_dir)
 
     tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
     if tokenizer.pad_token is None:
@@ -280,7 +307,7 @@ def bench_throughput_single(
 
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
-        torch_dtype=torch.bfloat16,
+        torch_dtype=torch_dtype,
         low_cpu_mem_usage=True,
     )
     model.config.use_cache = False
@@ -418,6 +445,7 @@ def train_and_eval_week4(
     contract = _load_contract_yaml(contract_yaml)
     cfg = resolve_week4_config(contract, task)
     set_seed(cfg.seed)
+    mp, torch_dtype = _effective_precision(cfg, run_dir)
 
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
@@ -444,7 +472,7 @@ def train_and_eval_week4(
 
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
-        torch_dtype=torch.bfloat16,
+        torch_dtype=torch_dtype,
         low_cpu_mem_usage=True,
     )
     model.config.use_cache = False
@@ -552,9 +580,10 @@ def train_and_eval_week4(
 
     # ---- Eval (lm-eval-harness)
     eval_out = {}
-    if cfg.eval_use_lm_eval:
+    if cfg.eval_use_lm_eval and (not torch.cuda.is_available() or accelerator.is_main_process):
         eval_path = os.path.join(run_dir, "lm_eval.json")
-        eval_out = run_lm_eval_harness(
+        try:
+            eval_out = run_lm_eval_harness(
             base_model_id=model_id,
             peft_adapter_path=adapter_dir if cfg.peft_mode == "lora" else None,
             tasks=[cfg.eval_task_name],
@@ -563,36 +592,26 @@ def train_and_eval_week4(
             device=eval_device,
             extra_model_args=None,
         )
-    try:
-        eval_out = run_lm_eval_harness(
-            base_model_id=model_id,
-            peft_adapter_path=adapter_dir if cfg.peft_mode == "lora" else None,
-            tasks=[cfg.eval_task_name],
-            out_json_path=eval_path,
-            batch_size=cfg.eval_batch_size,
-            device=eval_device,
-            extra_model_args=None,
-        )
-    except torch.cuda.OutOfMemoryError as e:
-        # Record GPU OOM and fall back to CPU so the run completes.
-        write_json(os.path.join(run_dir, "lm_eval_oom.json"), {
-            "device_requested": eval_device,
-            "fallback_device": "cpu",
-            "error": str(e),
-        })
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
-        eval_out = run_lm_eval_harness(
-            base_model_id=model_id,
-            peft_adapter_path=adapter_dir if cfg.peft_mode == "lora" else None,
-            tasks=[cfg.eval_task_name],
-            out_json_path=eval_path,
-            batch_size="1" if cfg.eval_batch_size == "auto" else cfg.eval_batch_size,
-            device="cpu",
-            extra_model_args=None,
-        )
+        except torch.cuda.OutOfMemoryError as e:
+            # Record GPU OOM and fall back to CPU so the run completes.
+            write_json(os.path.join(run_dir, "lm_eval_oom.json"), {
+                "device_requested": eval_device,
+                "fallback_device": "cpu",
+                "error": str(e),
+            })
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+            eval_out = run_lm_eval_harness(
+                base_model_id=model_id,
+                peft_adapter_path=adapter_dir if cfg.peft_mode == "lora" else None,
+                tasks=[cfg.eval_task_name],
+                out_json_path=eval_path,
+                batch_size="1" if cfg.eval_batch_size == "auto" else cfg.eval_batch_size,
+                device="cpu",
+                extra_model_args={"dtype": "float32"},
+            )
 
     # accelerator.wait_for_everyone()
 
