@@ -568,7 +568,25 @@ def train_and_eval_week4(
     if accelerator.is_main_process:
         os.makedirs(adapter_dir, exist_ok=True)
         unwrapped = accelerator.unwrap_model(model)
-        unwrapped.save_pretrained(adapter_dir)
+        if cfg.peft_mode == "lora":
+            # Ensure we save PEFT adapter files: adapter_config.json + adapter_model.*
+            try:
+                from peft import PeftModel
+                if not isinstance(unwrapped, PeftModel):
+                    raise RuntimeError(
+                        f"Expected a PEFT model for LoRA save, got: {type(unwrapped)}"
+                    )
+                unwrapped.save_pretrained(adapter_dir)
+            except Exception as e:
+                # Do NOT silently fall back to pytorch_model.bin; that breaks lm-eval.
+                write_json(os.path.join(run_dir, "adapter_save_error.json"), {
+                    "error": str(e),
+                    "unwrapped_type": str(type(unwrapped)),
+                })
+                raise
+        else:
+            # Full dense model save
+            unwrapped.save_pretrained(adapter_dir)
         
         tokenizer.save_pretrained(adapter_dir)
 
