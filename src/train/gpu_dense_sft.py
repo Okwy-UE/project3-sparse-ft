@@ -284,22 +284,16 @@ def build_loaders(task: str, tokenizer, cfg: Week4Config, micro_batch: int):
     dl_eval = DataLoader(ds_eval, batch_size=micro_batch, shuffle=False, drop_last=False, num_workers=2, pin_memory=True)
     return ds_train, ds_eval, dl_train, dl_eval
 
+@dataclass
+class BenchContext:
+    tokenizer: Any
+    model: Any
+    accelerator: Any
 
-def bench_throughput_single(
-    model_id: str,
-    task: str,
-    run_dir: str,
-    cfg: Week4Config,
-    micro_batch: int,
-) -> Dict[str, Any]:
-    """
-    Bench a short train loop to measure tokens/s at a given micro_batch.
-    Uses DeepSpeed (if enabled) for Mixtral feasibility.
-    """
+def _init_bench_context(model_id: str, cfg: Week4Config, run_dir: str) -> BenchContext:
     torch.cuda.empty_cache()
     gc.collect()
     set_seed(cfg.seed)
-    mp, torch_dtype = _effective_precision(cfg, run_dir)
 
     tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
     if tokenizer.pad_token is None:
@@ -312,10 +306,29 @@ def bench_throughput_single(
     )
     model.config.use_cache = False
     model.gradient_checkpointing_enable()
-
     model, _ = maybe_apply_lora(model, cfg)
 
     accelerator = _make_accelerator(cfg, run_dir)
+    return BenchContext(tokenizer=tokenizer, model=model, accelerator=accelerator)
+
+
+def bench_throughput_single(
+    model_id: str,
+    task: str,
+    run_dir: str,
+    cfg: Week4Config,
+    micro_batch: int,
+    bench_ctx=None
+) -> Dict[str, Any]:
+    """
+    Bench a short train loop to measure tokens/s at a given micro_batch.
+    Uses DeepSpeed (if enabled) for Mixtral feasibility.
+    """
+    if bench_ctx is None:
+        bench_ctx = _init_bench_context(model_id, cfg, run_dir)
+    tokenizer = bench_ctx.tokenizer
+    model = bench_ctx.model
+    accelerator = bench_ctx.accelerator
 
     _, _, dl_train, _ = build_loaders(task, tokenizer, cfg, micro_batch=micro_batch)
 
@@ -410,7 +423,7 @@ def pick_throughput_points(max_micro: int, k: int) -> List[int]:
     return pts[:k]
 
 
-def auto_find_max_micro_batch(model_id: str, task: str, run_dir: str, cfg: Week4Config, start: int = 16, cap: int = 32) -> int:
+def auto_find_max_micro_batch(model_id: str, task: str, run_dir: str, cfg: Week4Config, start: int = 16, cap: int = 32, bench_ctx=None) -> int:
     """
     Conservative OOM-based search: try 1,2,4,... until fail.
     Returns largest successful micro_batch.
@@ -419,7 +432,7 @@ def auto_find_max_micro_batch(model_id: str, task: str, run_dir: str, cfg: Week4
     b = start
     while b <= cap:
         try:
-            _ = bench_throughput_single(model_id, task, run_dir, cfg, micro_batch=b)
+            _ = bench_throughput_single(model_id, task, run_dir, cfg, micro_batch=b, bench_ctx=bench_ctx)
             best = b
             b *= 2
         except RuntimeError as e:
@@ -452,13 +465,14 @@ def train_and_eval_week4(
     write_json(os.path.join(run_dir, "week4_contract_resolved.json"), contract)
 
     # ---- Auto micro-batch
-    max_micro = auto_find_max_micro_batch(model_id, task, run_dir, cfg, start=2, cap=8)
+    bench_ctx = _init_bench_context(model_id, cfg, run_dir)
+    max_micro = auto_find_max_micro_batch(model_id, task, run_dir, cfg, start=2, cap=8, bench_ctx=bench_ctx)
     tp_points = pick_throughput_points(max_micro, cfg.tp_points)
 
     # ---- Throughput bench
     tp_metrics = []
     for b in tp_points:
-        m = bench_throughput_single(model_id, task, run_dir, cfg, micro_batch=b)
+        m = bench_throughput_single(model_id, task, run_dir, cfg, micro_batch=b. bench_ctx=bench_ctx)
         tp_metrics.append(m)
 
     write_json(os.path.join(run_dir, "throughput_scaling.json"), {"points": tp_metrics})
