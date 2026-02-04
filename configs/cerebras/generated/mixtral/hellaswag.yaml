@@ -68,6 +68,7 @@ trainer:
     checkpoint:
       steps: 1000000
       save_initial_checkpoint: true
+      disable_strict_checkpoint_loading: true
     logging:
       log_steps: 10
     callbacks:
@@ -80,8 +81,7 @@ trainer:
           r: 16
           alpha: 32
           dropout: 0.05
-          target_modules:
-          - Linear
+          target_modules: ["Linear"]
           merge_weights: false
   fit:
     ckpt_path: 
