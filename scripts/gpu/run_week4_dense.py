@@ -33,7 +33,7 @@ def main():
     # Create run_id/run_dir on rank0 only, then broadcast to all ranks
     obj_list = [None, None]
     if accelerator.is_main_process:
-        run_id = make_run_id(prefix=f"week4-gpu-dense-{args.model}-{args.task}")
+        run_id = make_run_id(prefix=f"gpu-dense-{args.model}-{args.task}")
         run_dir = make_run_dir(args.runs_root, run_id)
         obj_list = [run_id, run_dir]
 
@@ -97,12 +97,16 @@ def main():
         "run_dir": run_dir,
         "notes": args.notes,
     }
-    if accelerator.is_main_process:
-        append_run_registry(args.registry_csv, row)
-
-    if accelerator.is_main_process:
-        print(f"[OK] run_id={run_id}")
-        print(f"[OK] run_dir={run_dir}")
+    
+    try:
+        if accelerator.is_main_process:
+            append_run_registry(args.registry_csv, row)
+    
+        if accelerator.is_main_process:
+            print(f"[OK] run_id={run_id}")
+            print(f"[OK] run_dir={run_dir}")
+    except:
+        pass
 
 if __name__ == "__main__":
     main()
