@@ -1,7 +1,7 @@
 from __future__ import annotations
 import json
 import os
-import pathlib
+from pathlib import Path
 import torch
 from typing import Dict, Any, List, Optional
 
@@ -30,15 +30,14 @@ def run_lm_eval_harness(
     if extra_model_args and "dtype" in extra_model_args:
         dtype = extra_model_args["dtype"]
 
-    model_args_parts = [f"pretrained={base_model_id}", f"dtype=float16"]
+    model_args_parts = [f"pretrained={base_model_id}", f"dtype={dtype}"]
 
     # If multiple GPUs are visible and we're evaluating on CUDA, shard model across GPUs.
     if device.startswith("cuda") and torch.cuda.device_count() > 1:
         model_args_parts.append("device_map=auto")
 
     if peft_adapter_path is not None:
-        model_args_parts.append(f"peft={peft_adapter_path}")
-        peft_abs = str(pathlib.Path(peft_adapter_path).resolve())
+        peft_abs = str(Path(peft_adapter_path).resolve())
         model_args_parts.append(f"peft={peft_abs}")
     if extra_model_args:
         for k, v in extra_model_args.items():
