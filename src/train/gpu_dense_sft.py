@@ -567,7 +567,8 @@ def train_and_eval_week4(
     adapter_dir = os.path.abspath(os.path.join(run_dir, "adapter"))
     if accelerator.is_main_process:
         os.makedirs(adapter_dir, exist_ok=True)
-        unwrapped = accelerator.unwrap_model(model)
+        unwrapped = model.module if hasattr(m, "module") else model
+        # unwrapped = accelerator.unwrap_model(model)
         if cfg.peft_mode == "lora":
             # Ensure we save PEFT adapter files: adapter_config.json + adapter_model.*
             try:
