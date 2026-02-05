@@ -567,13 +567,15 @@ def train_and_eval_week4(
     adapter_dir = os.path.abspath(os.path.join(run_dir, "adapter"))
     if accelerator.is_main_process:
         os.makedirs(adapter_dir, exist_ok=True)
-        unwrapped = model.module if hasattr(m, "module") else model
-        # unwrapped = accelerator.unwrap_model(model)
+        unwrapped = accelerator.unwrap_model(model)
+        while hasattr(unwrapped, "module"):
+            unwrapped = unwrapped.module
         if cfg.peft_mode == "lora":
             # Ensure we save PEFT adapter files: adapter_config.json + adapter_model.*
             try:
                 from peft import PeftModel
-                if not isinstance(unwrapped, PeftModel):
+                is_peft = isinstance(unwrapped, PeftModel) or hasattr(unwrapped, "peft_config")
+                if not is_peft:
                     raise RuntimeError(
                         f"Expected a PEFT model for LoRA save, got: {type(unwrapped)}"
                     )
