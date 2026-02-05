@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 import argparse
 import os
+import torch
+from accelerate import Accelerator
 
 from src.train.gpu_dense_sft import train_and_eval_week4
 from src.utils.run_logging import (
@@ -14,6 +16,8 @@ DEFAULT_MODELS = {
 }
 
 def main():
+    accelerator = Accelerator()
+    
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True, choices=list(DEFAULT_MODELS.keys()))
     ap.add_argument("--task", required=True, choices=["boolq", "hellaswag", "gsm8k"])
@@ -26,8 +30,18 @@ def main():
     args = ap.parse_args()
 
     model_id = args.model_id or DEFAULT_MODELS[args.model]
-    run_id = make_run_id(prefix=f"week4-gpu-dense-{args.model}-{args.task}")
-    run_dir = make_run_dir(args.runs_root, run_id)
+    # Create run_id/run_dir on rank0 only, then broadcast to all ranks
+    obj_list = [None, None]
+    if accelerator.is_main_process:
+        run_id = make_run_id(prefix=f"week4-gpu-dense-{args.model}-{args.task}")
+        run_dir = make_run_dir(args.runs_root, run_id)
+        obj_list = [run_id, run_dir]
+
+    if accelerator.num_processes > 1:
+        torch.distributed.broadcast_object_list(obj_list, src=0)
+    run_id, run_dir = obj_list[0], obj_list[1]
+    if run_id is None or run_dir is None:
+        raise RuntimeError("Failed to broadcast run_id/run_dir from rank0.")
 
     # Optional: override contract deepspeed.enabled at runtime
     # auto => on for mixtral, off otherwise
@@ -43,19 +57,21 @@ def main():
         contract_obj["deepspeed"]["enabled"] = (args.model == "mixtral-8x7b")
     # write resolved contract into run_dir for provenance
     resolved_contract_path = os.path.join(run_dir, "week4_contract_runtime.yaml")
-    with open(resolved_contract_path, "w") as f:
-        yaml.safe_dump(contract_obj, f, sort_keys=False)
+    if accelerator.is_main_process:
+        with open(resolved_contract_path, "w") as f:
+            yaml.safe_dump(contract_obj, f, sort_keys=False)
 
     # snapshot env early
-    snapshot_env(run_dir)
-    write_json(os.path.join(run_dir, "run_spec.json"), {
-        "run_id": run_id,
-        "model_alias": args.model,
-        "model_id": model_id,
-        "task": args.task,
-        "contract": args.contract,
-        "notes": args.notes,
-    })
+    if accelerator.is_main_process:
+        snapshot_env(run_dir)
+        write_json(os.path.join(run_dir, "run_spec.json"), {
+            "run_id": run_id,
+            "model_alias": args.model,
+            "model_id": model_id,
+            "task": args.task,
+            "contract": args.contract,
+            "notes": args.notes,
+        })
 
     run_result = train_and_eval_week4(
         model_id=model_id,
@@ -81,10 +97,12 @@ def main():
         "run_dir": run_dir,
         "notes": args.notes,
     }
-    append_run_registry(args.registry_csv, row)
+    if accelerator.is_main_process:
+        append_run_registry(args.registry_csv, row)
 
-    print(f"[OK] run_id={run_id}")
-    print(f"[OK] run_dir={run_dir}")
+    if accelerator.is_main_process:
+        print(f"[OK] run_id={run_id}")
+        print(f"[OK] run_dir={run_dir}")
 
 if __name__ == "__main__":
     main()
