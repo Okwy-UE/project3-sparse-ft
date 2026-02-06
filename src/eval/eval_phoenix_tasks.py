@@ -2,8 +2,38 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import numpy as np
 import torch
 from typing import Dict, Any, List, Optional
+
+def _json_sanitize(obj: Any) -> Any:
+    """
+    Convert non-JSON-serializable objects (torch dtype, numpy scalars, etc.)
+    into JSON-safe primitives recursively.
+    """
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+
+    # torch dtype / device
+    if isinstance(obj, torch.dtype):
+        return str(obj)
+    if isinstance(obj, torch.device):
+        return str(obj)
+
+    # numpy types
+    if isinstance(obj, (np.integer, np.floating, np.bool_)):
+        return obj.item()
+    if isinstance(obj, (np.dtype,)):
+        return str(obj)
+
+    # containers
+    if isinstance(obj, dict):
+        return {str(k): _json_sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_sanitize(v) for v in obj]
+
+    # fallback: stringify unknown objects
+    return str(obj)
 
 def run_lm_eval_harness(
     base_model_id: str,
@@ -55,13 +85,19 @@ def run_lm_eval_harness(
         tasks=tasks,
         batch_size=batch_size,
         device=device,
-        # You can add num_fewshot here if you want to match a specific Phoenix setting.
+        # Add num_fewshot here to match a specific Phoenix setting.
     )
 
     print("Done with evaluation")
 
-    os.makedirs(os.path.dirname(out_json_path), exist_ok=True)
-    with open(out_json_path, "w") as f:
-        json.dump(res, f, indent=2, sort_keys=True)
+    try:
+        with open(out_json_path, "w") as f:
+            json.dump(_json_sanitize(res), f, indent=2, sort_keys=True)
+    except (TypeError, ValueError) as e:
+        pickle_path = out_json_path + ".pkl"
+        with open(pickle_path, "wb") as f:
+            pickle.dump(res, f)
 
-    return res
+    return _json_sanitize(res)
+
+
