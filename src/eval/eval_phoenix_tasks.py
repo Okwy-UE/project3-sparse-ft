@@ -58,6 +58,8 @@ def run_lm_eval_harness(
         # You can add num_fewshot here if you want to match a specific Phoenix setting.
     )
 
+    print("Done with evaluation")
+
     os.makedirs(os.path.dirname(out_json_path), exist_ok=True)
     with open(out_json_path, "w") as f:
         json.dump(res, f, indent=2, sort_keys=True)
