@@ -1,13 +1,13 @@
 setup:
   data:
     type: "local"
-    source: "/tmp/csdp_mistral-boolq-val.qjM8"   # directory containing *.jsonl (or a tmp dir with a symlink)
+    source: "/tmp/csdp_gsm8k.EyHj"   # directory containing *.jsonl (or a tmp dir with a symlink)
   mode: "finetuning"
-  output_dir: "data/cs_hdf5/mistral/boolq/val"
+  output_dir: "/home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/llama3/gsm8k/val"
   processes: 8
 
 processing:
-  huggingface_tokenizer: "mistralai/Mistral-7B-v0.1"
+  huggingface_tokenizer: "meta-llama/Meta-Llama-3.1-8B"
   max_seq_length: 2048
   read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:prompt_completion_text_read_hook"
   read_hook_kwargs:

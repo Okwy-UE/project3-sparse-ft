@@ -1,9 +1,9 @@
 setup:
   data:
     type: "local"
-    source: "/tmp/csdp_mistral-boolq-val.qjM8"   # directory containing *.jsonl (or a tmp dir with a symlink)
+    source: "/home/ebereuwadoka/project3-sparse-ft/data/sft/boolq"   # directory containing *.jsonl (or a tmp dir with a symlink)
   mode: "finetuning"
-  output_dir: "data/cs_hdf5/mistral/boolq/val"
+  output_dir: "/home/ebereuwadoka/project3-sparse-ft/data/cs_hdf5/mistral/boolq"
   processes: 8
 
 processing:
