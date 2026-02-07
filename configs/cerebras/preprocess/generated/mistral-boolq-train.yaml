@@ -1,13 +1,13 @@
 setup:
   data:
     type: "local"
-    source: "/tmp/csdp_mistral-boolq-train.cWSs"   # directory containing *.jsonl (or a tmp dir with a symlink)
+    source: "/tmp/csdp_mistral-boolq-train.31P8"   # directory containing *.jsonl (or a tmp dir with a symlink)
   mode: "finetuning"
   output_dir: "data/cs_hdf5/mistral/boolq/train"
   processes: 8
 
 processing:
-  huggingface_tokenizer: "mistralai/Mistral-7B-v0.3"
+  huggingface_tokenizer: "mistralai/Mistral-7B-v0.1"
   max_seq_length: 2048
   read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:prompt_completion_text_read_hook"
   read_hook_kwargs:
