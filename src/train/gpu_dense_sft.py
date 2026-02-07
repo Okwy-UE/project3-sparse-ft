@@ -466,7 +466,7 @@ def train_and_eval_week4(
 
     # ---- Auto micro-batch
     bench_ctx = _init_bench_context(model_id, cfg, run_dir)
-    max_micro = auto_find_max_micro_batch(model_id, task, run_dir, cfg, start4=, cap=64, bench_ctx=bench_ctx)
+    max_micro = auto_find_max_micro_batch(model_id, task, run_dir, cfg, start=4, cap=64, bench_ctx=bench_ctx)
     tp_points = pick_throughput_points(max_micro, cfg.tp_points)
 
     # ---- Throughput bench
