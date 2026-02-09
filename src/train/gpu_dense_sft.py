@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional, List
 
 import torch
 from torch.utils.data import DataLoader
+from torch.profiler import profile, ProfilerActivity, schedule, tensorboard_trace_handler
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_cosine_schedule_with_warmup
 
@@ -31,6 +32,15 @@ def tqdm_if_main(accelerator, iterable, **kwargs):
     # Avoid multi-bar spam + avoid aggressive log updates in Slurm output
     disable = (not is_main_process(accelerator)) or (not sys.stdout.isatty())
     return tqdm(iterable, disable=disable, mininterval=2.0, **kwargs)
+
+def cuda_mem(msg: str):
+    if not torch.cuda.is_available():
+        return
+    torch.cuda.synchronize()
+    alloc = torch.cuda.memory_allocated() / 1024**3
+    reserv = torch.cuda.memory_reserved() / 1024**3
+    max_alloc = torch.cuda.max_memory_allocated() / 1024**3
+    print(f"[CUDA] {msg:>18s} | alloc={alloc:6.2f} GB | reserv={reserv:6.2f} GB | max_alloc={max_alloc:6.2f} GB")
 
 def _supports_bf16() -> bool:
     """
@@ -311,6 +321,44 @@ def _init_bench_context(model_id: str, cfg: Week4Config, run_dir: str) -> BenchC
     accelerator = _make_accelerator(cfg, run_dir)
     return BenchContext(tokenizer=tokenizer, model=model, accelerator=accelerator)
 
+def profile_train_steps(model, optim, sched, batch, accelerator, logdir: str, steps: int = 3):
+    prof = profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        schedule=schedule(wait=0, warmup=1, active=steps, repeat=1),
+        on_trace_ready=tensorboard_trace_handler(logdir),
+        record_shapes=True,
+        profile_memory=True,
+        with_stack=True,   # gives file/line for ops (can be heavy but great for attribution)
+    )
+
+    model.train()
+    torch.cuda.reset_peak_memory_stats()
+
+    try:
+        with prof:
+            for i in range(1 + steps):  # 1 warmup + active
+                with accelerator.accumulate(model):
+                    out = model(
+                        input_ids=batch["input_ids"],
+                        attention_mask=batch["attention_mask"],
+                        labels=batch["labels"],
+                    )
+                    loss = out.loss
+                    accelerator.backward(loss)
+                    optim.step()
+                    sched.step()
+                    optim.zero_grad(set_to_none=True)
+    
+                accelerator.wait_for_everyone()
+                prof.step()
+
+        print(
+            prof.key_averages()
+                .table(sort_by="self_cuda_memory_usage", row_limit=30)
+        )
+    except:
+        print(f"Profile for batch {batch} failed")
+        pass
 
 def bench_throughput_single(
     model_id: str,
@@ -358,25 +406,35 @@ def bench_throughput_single(
 
     it = iter(dl_train)
     for step in tqdm_if_main(accelerator, range(total_steps), desc=f"bench(bs={micro_batch})"):
+        torch.cuda.reset_peak_memory_stats()
+        cuda_mem("start_step")
+        
         try:
             batch = next(it)
         except StopIteration:
             it = iter(dl_train)
             batch = next(it)
+        
         t0 = time.perf_counter()
         with accelerator.accumulate(model):
+            profile_train_steps(model, optim, sched, batch, accelerator, logdir=os.path.join(run_dir, "tb_prof"), steps=3)
             out = model(
                 input_ids=batch["input_ids"],
                 attention_mask=batch["attention_mask"],
                 labels=batch["labels"],
             )
+            cuda_mem("after_fwd")
+            
             loss = out.loss
             accelerator.backward(loss)
+            cuda_mem("after_bwd")
             if cfg.grad_clip_norm is not None and cfg.grad_clip_norm > 0:
                 accelerator.clip_grad_norm_(model.parameters(), cfg.grad_clip_norm)
             optim.step()
+            cuda_mem("after_optim")
             sched.step()
             optim.zero_grad(set_to_none=True)
+            cuda_mem("after_zero_grad")
 
         accelerator.wait_for_everyone()
         dt = time.perf_counter() - t0
