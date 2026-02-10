@@ -354,9 +354,11 @@ def profile_train_steps(model, optim, sched, batch, accelerator, logdir: str, st
                     phase = "loss"
                     with torch.profiler.record_function("profile_train_steps/loss"):
                         loss = out.loss
+                    cuda_mem("Profile loss")
                     phase = "backward"
                     with torch.profiler.record_function("profile_train_steps/backward"):
                         accelerator.backward(loss)
+                    cuda_mem("Profile backward")
                     phase = "optim.step"
                     with torch.profiler.record_function("profile_train_steps/optim_step"):
                         optim.step()
@@ -557,9 +559,11 @@ def train_and_eval_week4(
     # ---- Auto micro-batch
     bench_ctx = _init_bench_context(model_id, cfg, run_dir)
     max_micro = auto_find_max_micro_batch(model_id, task, run_dir, cfg, start=4, cap=64, bench_ctx=bench_ctx)
+    print(f"Max Micro is {max_micro}")
     tp_points = pick_throughput_points(max_micro, cfg.tp_points)
 
     # ---- Throughput bench
+    print("Now beginning batch size throughputting")
     tp_metrics = []
     for b in tp_points:
         m = bench_throughput_single(model_id, task, run_dir, cfg, micro_batch=b, bench_ctx=bench_ctx)
