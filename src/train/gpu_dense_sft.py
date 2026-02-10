@@ -456,7 +456,6 @@ def bench_throughput_single(
                 attention_mask=batch["attention_mask"],
                 labels=batch["labels"],
             )
-            print("profiling for throughput ended")
             cuda_mem("after_fwd")
             
             loss = out.loss
@@ -715,9 +714,19 @@ def train_and_eval_week4(
         accelerator=accelerator,
     )
 
+    # ---- Tear down distributed process
+    try:
+        accelerator.wait_for_everyone()
+    except Exception:
+        pass
+
+    if dist.is_available() and dist.is_initialized():
+        # one last barrier at torch.distributed level
+        dist.barrier()
+        dist.destroy_process_group()
+
     # ---- Eval (lm-eval-harness)
     eval_out = {}
-    accelerator.wait_for_everyone()
     if cfg.eval_use_lm_eval and accelerator.is_main_process:
         eval_path = os.path.join(run_dir, "lm_eval.json")
         try:
