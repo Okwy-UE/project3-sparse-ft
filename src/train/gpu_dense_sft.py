@@ -322,6 +322,7 @@ def _init_bench_context(model_id: str, cfg: Week4Config, run_dir: str) -> BenchC
     return BenchContext(tokenizer=tokenizer, model=model, accelerator=accelerator)
 
 def profile_train_steps(model, optim, sched, batch, accelerator, logdir: str, steps: int = 3):
+    print("profiling has begun")
     prof = profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
         schedule=schedule(wait=0, warmup=1, active=steps, repeat=1),
@@ -343,11 +344,15 @@ def profile_train_steps(model, optim, sched, batch, accelerator, logdir: str, st
                         attention_mask=batch["attention_mask"],
                         labels=batch["labels"],
                     )
+                    cuda_mem("Profile fwd pass")
                     loss = out.loss
+                    cuda_mem("Profile Loss")
                     accelerator.backward(loss)
                     optim.step()
+                    cuda_mem("Profile optimize")
                     sched.step()
                     optim.zero_grad(set_to_none=True)
+                    cuda_mem("Profile optim reset")
     
                 accelerator.wait_for_everyone()
                 prof.step()
@@ -356,8 +361,9 @@ def profile_train_steps(model, optim, sched, batch, accelerator, logdir: str, st
             prof.key_averages()
                 .table(sort_by="self_cuda_memory_usage", row_limit=30)
         )
-    except:
-        print(f"Profile for batch {batch} failed")
+    except Exception as e:
+        print(f"Profile for batch step {i} failed")
+        print(f"Why? \n {e}")
         pass
 
 def bench_throughput_single(
@@ -417,12 +423,14 @@ def bench_throughput_single(
         
         t0 = time.perf_counter()
         with accelerator.accumulate(model):
+            print(f"profiling for throughput of batch_size {micro_batch} started")
             profile_train_steps(model, optim, sched, batch, accelerator, logdir=os.path.join(run_dir, "tb_prof"), steps=3)
             out = model(
                 input_ids=batch["input_ids"],
                 attention_mask=batch["attention_mask"],
                 labels=batch["labels"],
             )
+            print("profiling for throughput ended")
             cuda_mem("after_fwd")
             
             loss = out.loss
