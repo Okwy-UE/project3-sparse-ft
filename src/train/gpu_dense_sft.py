@@ -717,7 +717,8 @@ def train_and_eval_week4(
 
     # ---- Eval (lm-eval-harness)
     eval_out = {}
-    if cfg.eval_use_lm_eval and (not torch.cuda.is_available() or accelerator.is_main_process):
+    accelerator.wait_for_everyone()
+    if cfg.eval_use_lm_eval and accelerator.is_main_process:
         eval_path = os.path.join(run_dir, "lm_eval.json")
         try:
             # Sanity check: adapter_config.json must exist for LoRA
@@ -761,7 +762,7 @@ def train_and_eval_week4(
                 extra_model_args={"dtype": "float32"},
             )
 
-    # accelerator.wait_for_everyone()
+    accelerator.wait_for_everyone()
 
     run_result = {
         "model_id": model_id,
