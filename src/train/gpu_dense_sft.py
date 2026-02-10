@@ -335,23 +335,38 @@ def profile_train_steps(model, optim, sched, batch, accelerator, logdir: str, st
     model.train()
     torch.cuda.reset_peak_memory_stats()
 
+    # Track where we are so failures are attributable.
+    phase = "init"
+    i = -1
+
     try:
         with prof:
             for i in range(1 + steps):  # 1 warmup + active
                 with accelerator.accumulate(model):
-                    out = model(
-                        input_ids=batch["input_ids"],
-                        attention_mask=batch["attention_mask"],
-                        labels=batch["labels"],
-                    )
+                    phase = "fwd"
+                    with torch.profiler.record_function("profile_train_steps/fwd"):
+                        out = model(
+                            input_ids=batch["input_ids"],
+                            attention_mask=batch["attention_mask"],
+                            labels=batch["labels"],
+                        )
                     cuda_mem("Profile fwd pass")
-                    loss = out.loss
-                    cuda_mem("Profile Loss")
-                    accelerator.backward(loss)
-                    optim.step()
+                    phase = "loss"
+                    with torch.profiler.record_function("profile_train_steps/loss"):
+                        loss = out.loss
+                    phase = "backward"
+                    with torch.profiler.record_function("profile_train_steps/backward"):
+                        accelerator.backward(loss)
+                    phase = "optim.step"
+                    with torch.profiler.record_function("profile_train_steps/optim_step"):
+                        optim.step()
                     cuda_mem("Profile optimize")
-                    sched.step()
-                    optim.zero_grad(set_to_none=True)
+                    phase = "sched.step"
+                    with torch.profiler.record_function("profile_train_steps/sched_step"):
+                        sched.step()
+                    phase = "zero_grad"
+                    with torch.profiler.record_function("profile_train_steps/zero_grad"):
+                        optim.zero_grad(set_to_none=True)
                     cuda_mem("Profile optim reset")
     
                 accelerator.wait_for_everyone()
@@ -362,8 +377,11 @@ def profile_train_steps(model, optim, sched, batch, accelerator, logdir: str, st
                 .table(sort_by="self_cuda_memory_usage", row_limit=30)
         )
     except Exception as e:
-        print(f"Profile for batch step {i} failed")
-        print(f"Why? \n {e}")
+        print(f"[PROFILE ERROR] profile_train_steps failed at loop i={i} phase='{phase}'")
+        print(f"[PROFILE ERROR] exception: {repr(e)}")
+        tb = traceback.format_exc()
+        print("[PROFILE ERROR] traceback:")
+        print(tb)
         pass
 
 def bench_throughput_single(
@@ -423,8 +441,14 @@ def bench_throughput_single(
         
         t0 = time.perf_counter()
         with accelerator.accumulate(model):
-            print(f"profiling for throughput of batch_size {micro_batch} started")
-            profile_train_steps(model, optim, sched, batch, accelerator, logdir=os.path.join(run_dir, "tb_prof"), steps=3)
+            if step == 0:
+                print(f"profiling for throughput of batch_size {micro_batch} started (step=0 only)")
+                profile_train_steps(
+                    model, optim, sched, batch, accelerator,
+                    logdir=os.path.join(run_dir, "tb_prof"),
+                    steps=3,
+                )
+                print("profiling for throughput ended")
             out = model(
                 input_ids=batch["input_ids"],
                 attention_mask=batch["attention_mask"],
