@@ -772,7 +772,7 @@ def train_and_eval_week4(
                 extra_model_args={"dtype": "float32"},
             )
 
-    accelerator.wait_for_everyone()
+    # accelerator.wait_for_everyone()
 
     run_result = {
         "model_id": model_id,
