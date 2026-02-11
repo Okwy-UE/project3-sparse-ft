@@ -5,6 +5,13 @@ from pathlib import Path
 import numpy as np
 import torch
 from typing import Dict, Any, List, Optional
+import torch.distributed as dist
+
+def _is_rank0() -> bool:
+    # Works whether dist is initialized or not
+    if dist.is_available() and dist.is_initialized():
+        return dist.get_rank() == 0
+    return int(os.environ.get("RANK", "0")) == 0
 
 def _json_sanitize(obj: Any) -> Any:
     """
@@ -63,7 +70,12 @@ def run_lm_eval_harness(
     model_args_parts = [f"pretrained={base_model_id}", f"dtype={dtype}"]
 
     # If multiple GPUs are visible and we're evaluating on CUDA, shard model across GPUs.
-    if device.startswith("cuda") and torch.cuda.device_count() > 1:
+    def _is_distributed_env() -> bool:
+        if dist.is_available() and dist.is_initialized():
+            return dist.get_world_size() > 1
+        return int(os.environ.get("WORLD_SIZE", "1")) > 1
+        
+    if device.startswith("cuda") and torch.cuda.device_count() > 1 and not _is_distributed_env():
         model_args_parts.append("device_map=auto")
 
     if peft_adapter_path is not None:
@@ -90,14 +102,16 @@ def run_lm_eval_harness(
 
     print("Done with evaluation")
 
-    try:
-        with open(out_json_path, "w") as f:
-            json.dump(_json_sanitize(res), f, indent=2, sort_keys=True)
-    except (TypeError, ValueError) as e:
-        pickle_path = out_json_path + ".pkl"
-        with open(pickle_path, "wb") as f:
-            pickle.dump(res, f)
-
+    if _is_rank0():
+        try:
+            with open(out_json_path, "w") as f:
+                json.dump(_json_sanitize(res), f, indent=2, sort_keys=True)
+        except (TypeError, ValueError) as e:
+            pickle_path = out_json_path + ".pkl"
+            import pickle
+            with open(pickle_path, "wb") as f:
+                pickle.dump(res, f)
+    
     return _json_sanitize(res)
 
 
