@@ -711,24 +711,12 @@ def train_and_eval_week4(
             "ds_eval": ds_eval,
             "tokenizer": tokenizer,
         },
-        accelerator=accelerator,
+        accelerator=None,
     )
-
-    # ---- Tear down distributed process
-    import torch.distributed as dist
-    try:
-        accelerator.wait_for_everyone()
-    except Exception:
-        pass
-
-    if dist.is_available() and dist.is_initialized():
-        # one last barrier at torch.distributed level
-        dist.barrier()
-        dist.destroy_process_group()
 
     # ---- Eval (lm-eval-harness)
     eval_out = {}
-    if cfg.eval_use_lm_eval and accelerator.is_main_process:
+    if cfg.eval_use_lm_eval:
         eval_path = os.path.join(run_dir, "lm_eval.json")
         try:
             # Sanity check: adapter_config.json must exist for LoRA
@@ -741,16 +729,24 @@ def train_and_eval_week4(
                         "files": sorted(os.listdir(adapter_dir)) if os.path.isdir(adapter_dir) else None,
                     })
                     raise RuntimeError(f"adapter_config.json missing in {adapter_dir}")
+            
+            # one GPU per rank
+            eval_device_rank = f"cuda:{accelerator.local_process_index}" if torch.cuda.is_available() else "cpu"
+            
+            eval_out_rank = run_lm_eval_harness(
+                base_model_id=model_id,
+                peft_adapter_path=adapter_dir if cfg.peft_mode == "lora" else None,
+                tasks=[cfg.eval_task_name],
+                out_json_path=eval_path,
+                batch_size=cfg.eval_batch_size,
+                device=eval_device_rank,
+                extra_model_args=None,
+            )
 
-            eval_out = run_lm_eval_harness(
-            base_model_id=model_id,
-            peft_adapter_path=adapter_dir if cfg.peft_mode == "lora" else None,
-            tasks=[cfg.eval_task_name],
-            out_json_path=eval_path,
-            batch_size=cfg.eval_batch_size,
-            device=eval_device,
-            extra_model_args=None,
-        )
+            # keep only rank0 result in run_result
+            if accelerator.is_main_process:
+                eval_out = eval_out_rank
+            
         except torch.cuda.OutOfMemoryError as e:
             # Record GPU OOM and fall back to CPU so the run completes.
             write_json(os.path.join(run_dir, "lm_eval_oom.json"), {
@@ -772,7 +768,14 @@ def train_and_eval_week4(
                 extra_model_args={"dtype": "float32"},
             )
 
-    # accelerator.wait_for_everyone()
+    accelerator.wait_for_everyone()
+    
+    # ---- Tear down distributed process
+    import torch.distributed as dist
+    if dist.is_available() and dist.is_initialized():
+        # one last barrier at torch.distributed level
+        dist.barrier()
+        dist.destroy_process_group()
 
     run_result = {
         "model_id": model_id,
@@ -788,5 +791,6 @@ def train_and_eval_week4(
         "adapter_dir": adapter_dir,
     }
 
-    write_json(os.path.join(run_dir, "run_result.json"), run_result)
+    if accelerator.is_main_process:
+        write_json(os.path.join(run_dir, "run_result.json"), run_result)
     return run_result
