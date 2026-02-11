@@ -715,6 +715,7 @@ def train_and_eval_week4(
     )
 
     # ---- Tear down distributed process
+    import torch.distributed as dist
     try:
         accelerator.wait_for_everyone()
     except Exception:
