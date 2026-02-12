@@ -67,7 +67,12 @@ def run_lm_eval_harness(
     if extra_model_args and "dtype" in extra_model_args:
         dtype = extra_model_args["dtype"]
 
-    model_args_parts = [f"pretrained={base_model_id}", f"dtype={dtype}"]
+    model_args_parts = [
+        f"pretrained={base_model_id}",
+        f"dtype={dtype}",
+        f"torch_dtype={dtype}",
+        "low_cpu_mem_usage=True",
+    ]
 
     # If multiple GPUs are visible and we're evaluating on CUDA, shard model across GPUs.
     def _is_distributed_env() -> bool:
