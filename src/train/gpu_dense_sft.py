@@ -699,6 +699,10 @@ def train_and_eval_week4(
         "tokens_total": tokens_total,
     })
 
+    is_main = accelerator.is_main_process
+    local_rank = accelerator.local_process_index
+    world_size = accelerator.num_processes
+
     # ---- HARD cleanup BEFORE lm-eval-harness loads a new model
     _hard_cuda_cleanup(
         {
@@ -711,28 +715,18 @@ def train_and_eval_week4(
             "ds_eval": ds_eval,
             "tokenizer": tokenizer,
         },
-        accelerator=None,
+        accelerator=accelerator,
     )
+    accelerator = None #To be sure
 
     # ---- Eval (lm-eval-harness)
     eval_out = {}
     if cfg.eval_use_lm_eval:
         eval_path = os.path.join(run_dir, "lm_eval.json")
-        try:
-            # Sanity check: adapter_config.json must exist for LoRA
-            if cfg.peft_mode == "lora":
-                cfg_path = os.path.join(adapter_dir, "adapter_config.json")
-                if not os.path.isfile(cfg_path):
-                    write_json(os.path.join(run_dir, "lm_eval_adapter_missing.json"), {
-                        "adapter_dir": adapter_dir,
-                        "missing": "adapter_config.json",
-                        "files": sorted(os.listdir(adapter_dir)) if os.path.isdir(adapter_dir) else None,
-                    })
-                    raise RuntimeError(f"adapter_config.json missing in {adapter_dir}")
-            
-            # one GPU per rank
-            eval_device_rank = f"cuda:{accelerator.local_process_index}" if torch.cuda.is_available() else "cpu"
-            
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+        eval_device_rank = f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu"
+
+        try:            
             eval_out_rank = run_lm_eval_harness(
                 base_model_id=model_id,
                 peft_adapter_path=adapter_dir if cfg.peft_mode == "lora" else None,
@@ -744,20 +738,24 @@ def train_and_eval_week4(
             )
 
             # keep only rank0 result in run_result
-            if accelerator.is_main_process:
+            if int(os.environ.get("RANK", "0")) == 0:
                 eval_out = eval_out_rank
             
-        except torch.cuda.OutOfMemoryError as e:
-            # Record GPU OOM and fall back to CPU so the run completes.
+        except (torch.OutOfMemoryError, torch.cuda.OutOfMemoryError, RuntimeError) as e:
+            if isinstance(e, RuntimeError) and "out of memory" not in str(e).lower():
+                raise
+            
             write_json(os.path.join(run_dir, "lm_eval_oom.json"), {
                 "device_requested": eval_device,
                 "fallback_device": "cpu",
                 "error": str(e),
             })
+            
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.ipc_collect()
+                
             eval_out = run_lm_eval_harness(
                 base_model_id=model_id,
                 peft_adapter_path=adapter_dir if cfg.peft_mode == "lora" else None,
@@ -767,11 +765,17 @@ def train_and_eval_week4(
                 device="cpu",
                 extra_model_args={"dtype": "float32"},
             )
+            if int(os.environ.get("RANK", "0")) == 0:
+                eval_out = eval_out_rank
 
-    accelerator.wait_for_everyone()
+    import torch.distributed as dist
+    
+    def is_rank0():
+        if dist.is_available() and dist.is_initialized():
+            return dist.get_rank() == 0
+        return int(os.environ.get("RANK", "0")) == 0
     
     # ---- Tear down distributed process
-    import torch.distributed as dist
     if dist.is_available() and dist.is_initialized():
         # one last barrier at torch.distributed level
         dist.barrier()
@@ -791,6 +795,6 @@ def train_and_eval_week4(
         "adapter_dir": adapter_dir,
     }
 
-    if accelerator.is_main_process:
+    if is_main():
         write_json(os.path.join(run_dir, "run_result.json"), run_result)
     return run_result
