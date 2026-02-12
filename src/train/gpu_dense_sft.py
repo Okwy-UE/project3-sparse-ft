@@ -700,7 +700,8 @@ def train_and_eval_week4(
     })
 
     is_main = accelerator.is_main_process
-    local_rank = accelerator.local_process_index
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    rank = int(os.environ.get("RANK", "0"))
     world_size = accelerator.num_processes
 
     # ---- HARD cleanup BEFORE lm-eval-harness loads a new model
@@ -721,13 +722,17 @@ def train_and_eval_week4(
 
     # ---- Eval (lm-eval-harness)
     eval_out = {}
-    if cfg.eval_use_lm_eval:
+    if cfg.eval_use_lm_eval and rank==0:
         eval_path = os.path.join(run_dir, "lm_eval.json")
-        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
         eval_device_rank = f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu"
 
-        try:            
-            eval_out_rank = run_lm_eval_harness(
+        try:
+            torch.cuda.synchronize()
+            free, total = torch.cuda.mem_get_info()
+            print(f"[EVAL PRELOAD] free={free/1024**3:.2f} GB total={total/1024**3:.2f} GB")
+            print(f"[EVAL PRELOAD] allocated={torch.cuda.memory_allocated()/1024**3:.2f} GB reserved={torch.cuda.memory_reserved()/1024**3:.2f} GB")
+            
+            eval_out = run_lm_eval_harness(
                 base_model_id=model_id,
                 peft_adapter_path=adapter_dir if cfg.peft_mode == "lora" else None,
                 tasks=[cfg.eval_task_name],
@@ -736,10 +741,6 @@ def train_and_eval_week4(
                 device=eval_device_rank,
                 extra_model_args=None,
             )
-
-            # keep only rank0 result in run_result
-            if int(os.environ.get("RANK", "0")) == 0:
-                eval_out = eval_out_rank
             
         except (torch.OutOfMemoryError, torch.cuda.OutOfMemoryError, RuntimeError) as e:
             if isinstance(e, RuntimeError) and "out of memory" not in str(e).lower():
@@ -765,8 +766,6 @@ def train_and_eval_week4(
                 device="cpu",
                 extra_model_args={"dtype": "float32"},
             )
-            if int(os.environ.get("RANK", "0")) == 0:
-                eval_out = eval_out_rank
 
     import torch.distributed as dist
     
@@ -777,10 +776,8 @@ def train_and_eval_week4(
     
     # ---- Tear down distributed process
     if dist.is_available() and dist.is_initialized():
-        # one last barrier at torch.distributed level
         dist.barrier()
-        dist.destroy_process_group()
-
+        
     run_result = {
         "model_id": model_id,
         "task": task,
