@@ -745,6 +745,15 @@ def train_and_eval_week4(
         print(f"[POST CLEANUP] free={free/1024**3:.2f} GB total={total/1024**3:.2f} GB")
         print(f"[POST CLEANUP] allocated={torch.cuda.memory_allocated()/1024**3:.2f} GB reserved={torch.cuda.memory_reserved()/1024**3:.2f} GB")
 
+    # ---- IMPORTANT: lm-eval uses accelerate.gather; if torch.distributed is initialized
+    # it will run collectives that MUST be matched on all ranks. Since we want eval on
+    # rank0 only, tear down the process group first (on ALL ranks).
+    import torch.distributed as dist
+    if dist.is_available() and dist.is_initialized():
+        dist.barrier()
+        dist.destroy_process_group()
+        print(f"[DIST] destroyed process group on rank={int(os.environ.get('RANK','0'))}")
+    
     # ---- Eval (lm-eval-harness)
     eval_out = {}
     if cfg.eval_use_lm_eval and rank==0:
@@ -793,17 +802,6 @@ def train_and_eval_week4(
                 device="cpu",
                 extra_model_args={"dtype": "float32"},
             )
-
-    import torch.distributed as dist
-    
-    def is_rank0():
-        if dist.is_available() and dist.is_initialized():
-            return dist.get_rank() == 0
-        return int(os.environ.get("RANK", "0")) == 0
-    
-    # ---- Tear down distributed process
-    if dist.is_available() and dist.is_initialized():
-        dist.barrier()
         
     run_result = {
         "model_id": model_id,
