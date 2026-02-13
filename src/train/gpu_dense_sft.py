@@ -685,6 +685,8 @@ def train_and_eval_week4(
             unwrapped.save_pretrained(adapter_dir)
         
         tokenizer.save_pretrained(adapter_dir)
+        # IMPORTANT: unwrapped can keep model alive
+        del unwrapped
 
     accelerator.wait_for_everyone()
 
@@ -718,13 +720,38 @@ def train_and_eval_week4(
         },
         accelerator=accelerator,
     )
-    accelerator = None #To be sure
+    
+    # IMPORTANT: break outer-scope references (cleanup function can't delete these names)
+    accelerator = None
+    model = None
+    optim = None
+    sched = None
+    dl_train = None
+    dl_eval = None
+    ds_train = None
+    ds_eval = None
+    tokenizer = None
+    # also drop any lingering last-step tensors
+    batch = None
+    out = None
+    loss = None
+
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+        torch.cuda.synchronize()
+        free, total = torch.cuda.mem_get_info()
+        print(f"[POST CLEANUP] free={free/1024**3:.2f} GB total={total/1024**3:.2f} GB")
+        print(f"[POST CLEANUP] allocated={torch.cuda.memory_allocated()/1024**3:.2f} GB reserved={torch.cuda.memory_reserved()/1024**3:.2f} GB")
 
     # ---- Eval (lm-eval-harness)
     eval_out = {}
     if cfg.eval_use_lm_eval and rank==0:
         eval_path = os.path.join(run_dir, "lm_eval.json")
-        eval_device_rank = f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu"
+        eval_device_rank = "cuda:0" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            torch.cuda.set_device(0)
 
         try:
             torch.cuda.synchronize()
