@@ -93,6 +93,7 @@ def run_lm_eval_harness(
             model_args_parts.append(f"{k}={v}")
 
     model_args = ",".join(model_args_parts)
+    print(f"[LM-EVAL] device={device} model_args={model_args}")
 
     # NOTE: HFLM constructed above does not automatically load PEFT adapter.
     # In python API, easiest is to use evaluator.simple_evaluate with model_args string.
