@@ -80,7 +80,7 @@ def run_lm_eval_harness(
             return dist.get_world_size() > 1
         return int(os.environ.get("WORLD_SIZE", "1")) > 1
         
-    if device.startswith("cuda") and torch.cuda.device_count() > 1 and not _is_distributed_env():
+    if device == "cuda" and torch.cuda.device_count() > 1 and not _is_distributed_env():
         model_args_parts.append("device_map=auto")
 
     if peft_adapter_path is not None:
