@@ -50,6 +50,7 @@ def run_lm_eval_harness(
     batch_size: str = "auto",
     device: str = "cuda:0",
     extra_model_args: Optional[Dict[str, str]] = None,
+    write_results: bool = True,
 ) -> Dict[str, Any]:
     """
     Uses lm-eval-harness (EleutherAI) HuggingFace backend.
@@ -108,7 +109,7 @@ def run_lm_eval_harness(
 
     print("Done with evaluation")
 
-    if _is_rank0():
+    if write_results:
         try:
             with open(out_json_path, "w") as f:
                 json.dump(_json_sanitize(res), f, indent=2, sort_keys=True)
