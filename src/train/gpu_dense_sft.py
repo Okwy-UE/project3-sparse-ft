@@ -701,7 +701,7 @@ def train_and_eval_week4(
         "tokens_total": tokens_total,
     })
 
-    is_main = accelerator.is_main_process
+    is_writer = (rank == 0)
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     rank = int(os.environ.get("RANK", "0"))
     world_size = accelerator.num_processes
@@ -756,11 +756,15 @@ def train_and_eval_week4(
     
     # ---- Eval (lm-eval-harness)
     eval_out = {}
-    if cfg.eval_use_lm_eval and rank==0:
+    if cfg.eval_use_lm_eval and is_writer:
         eval_path = os.path.join(run_dir, "lm_eval.json")
         eval_device_rank = "cuda:0" if torch.cuda.is_available() else "cpu"
         if torch.cuda.is_available():
             torch.cuda.set_device(0)
+
+        os.environ["WORLD_SIZE"] = "1"
+        os.environ["RANK"] = "0"
+        os.environ["LOCAL_RANK"] = "0"
 
         try:
             torch.cuda.synchronize()
@@ -776,6 +780,7 @@ def train_and_eval_week4(
                 batch_size=cfg.eval_batch_size,
                 device=eval_device_rank,
                 extra_model_args=None,
+                write_results=True,
             )
             
         except (torch.OutOfMemoryError, torch.cuda.OutOfMemoryError, RuntimeError) as e:
@@ -800,7 +805,8 @@ def train_and_eval_week4(
                 out_json_path=eval_path,
                 batch_size="1" if cfg.eval_batch_size == "auto" else cfg.eval_batch_size,
                 device="cpu",
-                extra_model_args={"dtype": "float32"},
+                extra_model_args={"dtype": "float16"},
+                write_results=True,
             )
         
     run_result = {
@@ -817,6 +823,6 @@ def train_and_eval_week4(
         "adapter_dir": adapter_dir,
     }
 
-    if is_main():
+    if is_writer:
         write_json(os.path.join(run_dir, "run_result.json"), run_result)
     return run_result
