@@ -31,6 +31,7 @@ def _eval_only(model_id: str, task: str, run_dir: str, contract_fallback: str):
     contract_path = runtime_contract if os.path.exists(runtime_contract) else contract_fallback
     with open(contract_path, "r") as f:
         contract_obj = yaml.safe_load(f)
+    print(f"[EVAL-ONLY] Resolving config")
     cfg = resolve_week4_config(contract_obj, task)
 
     adapter_dir = os.path.abspath(os.path.join(run_dir, "adapter"))
@@ -44,6 +45,7 @@ def _eval_only(model_id: str, task: str, run_dir: str, contract_fallback: str):
     peft_path = adapter_dir if is_lora else None
 
     # Ensure single-process eval
+    print(f"[EVAL-ONLY] Destroying process group")
     import torch.distributed as dist
     if dist.is_available() and dist.is_initialized():
         dist.barrier()
@@ -55,6 +57,7 @@ def _eval_only(model_id: str, task: str, run_dir: str, contract_fallback: str):
     os.environ["RANK"] = "0"
     os.environ["LOCAL_RANK"] = "0"
 
+    print(f"[EVAL-ONLY] Starting evaluation")
     eval_out = run_lm_eval_harness(
         base_model_id=base_for_eval,
         peft_adapter_path=peft_path,
