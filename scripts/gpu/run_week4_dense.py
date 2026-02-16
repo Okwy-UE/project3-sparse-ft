@@ -26,9 +26,11 @@ def _latest_matching_run_dir(runs_root: str, prefix: str) -> str | None:
 
 def _eval_only(model_id: str, task: str, run_dir: str, contract_fallback: str):
     # Prefer the resolved runtime contract saved in the run_dir (best provenance).
+    print(f"[EVAL-ONLY] Importing yaml")
     import yaml
     runtime_contract = os.path.join(run_dir, "week4_contract_runtime.yaml")
     contract_path = runtime_contract if os.path.exists(runtime_contract) else contract_fallback
+    print(f"[EVAL-ONLY] Reading contract")
     with open(contract_path, "r") as f:
         contract_obj = yaml.safe_load(f)
     print(f"[EVAL-ONLY] Resolving config")
