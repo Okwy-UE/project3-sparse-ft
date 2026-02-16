@@ -47,15 +47,9 @@ def _eval_only(model_id: str, task: str, run_dir: str, contract_fallback: str):
     peft_path = adapter_dir if is_lora else None
 
     # Ensure single-process eval
-    print(f"[EVAL-ONLY] Destroying process group")
-    import torch.distributed as dist
-    if dist.is_available() and dist.is_initialized():
-        dist.barrier()
-        dist.destroy_process_group()
 
     if torch.cuda.is_available():
         torch.cuda.set_device(0)
-    os.environ["WORLD_SIZE"] = "1"
     os.environ["RANK"] = "0"
     os.environ["LOCAL_RANK"] = "0"
 
