@@ -7,6 +7,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import DataCollatorForLanguageModeling
 from src.data.phoenix_sft_tasks import build_sft_dataset, make_tokenize_fn
 from src.pruning.mask_types import MaskSpec
 from src.pruning.importance import collect_linear_input_l2, importance_unstructured_task
@@ -83,7 +84,24 @@ def main():
     tok = AutoTokenizer.from_pretrained(args.hf_model, use_fast=True)
     ds = build_sft_dataset(args.task, split="train", max_samples=args.max_samples)
     ds = ds.map(make_tokenize_fn(tok, max_seq_len=args.max_seq_len), remove_columns=ds.column_names)
-    dl = DataLoader(ds, batch_size=2, shuffle=False)
+
+    # Ensure batches are torch tensors (otherwise DataLoader returns python lists)
+    # Try common column sets used by SFT builders.
+    cols = [c for c in ["input_ids", "attention_mask", "labels"] if c in ds.column_names]
+    if not cols:
+        raise ValueError(f"Tokenized dataset has unexpected columns: {ds.column_names}")
+    ds.set_format(type="torch", columns=cols)
+
+    # Collator keeps shapes consistent; for causal LM it should not MLM-mask.
+    # If your dataset already provides labels, collator will mostly just stack.
+    collator = DataCollatorForLanguageModeling(tokenizer=tok, mlm=False)
+
+    dl = DataLoader(
+        ds,
+        batch_size=2,
+        shuffle=False,
+        collate_fn=collator,
+    )
 
     model = AutoModelForCausalLM.from_pretrained(args.hf_model, torch_dtype=torch.float32)
     model.eval()
