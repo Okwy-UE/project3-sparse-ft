@@ -546,6 +546,7 @@ def train_and_eval_week4(
     contract_yaml: str,
     run_dir: str,
     eval_device: str = "cuda:0",
+    eval_only = False
 ) -> Dict[str, Any]:
     contract = _load_contract_yaml(contract_yaml)
     cfg = resolve_week4_config(contract, task)
