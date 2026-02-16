@@ -701,10 +701,10 @@ def train_and_eval_week4(
         "tokens_total": tokens_total,
     })
 
-    is_writer = (rank == 0)
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     rank = int(os.environ.get("RANK", "0"))
     world_size = accelerator.num_processes
+    is_writer = (rank == 0)
 
     # ---- HARD cleanup BEFORE lm-eval-harness loads a new model
     _hard_cuda_cleanup(
