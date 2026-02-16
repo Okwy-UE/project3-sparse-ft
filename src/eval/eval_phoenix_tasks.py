@@ -57,13 +57,15 @@ def run_lm_eval_harness(
     Supports evaluating PEFT adapters by passing `peft=...` in model_args.
     """
     try:
+        print("Importing lm_eval")
         from lm_eval import evaluator
     except Exception as e:
         raise RuntimeError(
             "lm-eval-harness is not installed. Install with: pip install 'lm_eval[hf]'\n"
             f"Import error: {e}"
         )
-
+        
+    print("Done importing lm_eval")
     dtype = "float16"
     if extra_model_args and "dtype" in extra_model_args:
         dtype = extra_model_args["dtype"]
