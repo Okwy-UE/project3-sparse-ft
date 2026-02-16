@@ -3,65 +3,85 @@ import argparse
 import os
 import torch
 from accelerate import Accelerator
-from pathlib import Path
+
 from src.train.gpu_dense_sft import train_and_eval_week4
+from src.train.gpu_dense_sft import resolve_week4_config  # reuse existing config mapping
+from src.eval.eval_phoenix_tasks import run_lm_eval_harness
 from src.utils.run_logging import (
     make_run_id, make_run_dir, snapshot_env, append_run_registry, write_json
 )
+
+def _latest_matching_run_dir(runs_root: str, prefix: str) -> str | None:
+    if not os.path.isdir(runs_root):
+        return None
+    cands = []
+    for name in os.listdir(runs_root):
+        path = os.path.join(runs_root, name)
+        if os.path.isdir(path) and name.startswith(prefix):
+            cands.append(path)
+    if not cands:
+        return None
+    cands.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    return cands[0]
+
+def _eval_only(model_id: str, task: str, run_dir: str, contract_fallback: str):
+    # Prefer the resolved runtime contract saved in the run_dir (best provenance).
+    import yaml
+    runtime_contract = os.path.join(run_dir, "week4_contract_runtime.yaml")
+    contract_path = runtime_contract if os.path.exists(runtime_contract) else contract_fallback
+    with open(contract_path, "r") as f:
+        contract_obj = yaml.safe_load(f)
+    cfg = resolve_week4_config(contract_obj, task)
+
+    adapter_dir = os.path.abspath(os.path.join(run_dir, "adapter"))
+    eval_path = os.path.join(run_dir, "lm_eval.json")
+
+    # Detect LoRA vs "full model saved" in adapter_dir.
+    # - LoRA: adapter_config.json exists => eval base HF model + peft adapter.
+    # - Dense: no adapter_config.json => eval model from adapter_dir directly.
+    is_lora = os.path.exists(os.path.join(adapter_dir, "adapter_config.json"))
+    base_for_eval = model_id if is_lora else adapter_dir
+    peft_path = adapter_dir if is_lora else None
+
+    # Ensure single-process eval
+    import torch.distributed as dist
+    if dist.is_available() and dist.is_initialized():
+        dist.barrier()
+        dist.destroy_process_group()
+
+    if torch.cuda.is_available():
+        torch.cuda.set_device(0)
+    os.environ["WORLD_SIZE"] = "1"
+    os.environ["RANK"] = "0"
+    os.environ["LOCAL_RANK"] = "0"
+
+    eval_out = run_lm_eval_harness(
+        base_model_id=base_for_eval,
+        peft_adapter_path=peft_path,
+        tasks=[cfg.eval_task_name],
+        out_json_path=eval_path,
+        batch_size=cfg.eval_batch_size,
+        device="cuda:0" if torch.cuda.is_available() else "cpu",
+        extra_model_args=None,
+        write_results=True,
+    )
+    # Lightweight provenance
+    write_json(os.path.join(run_dir, "eval_only_result.json"), {
+        "task": task,
+        "eval_task_name": cfg.eval_task_name,
+        "batch_size": cfg.eval_batch_size,
+        "is_lora": is_lora,
+        "base_model_id_for_eval": base_for_eval,
+        "peft_adapter_path": peft_path,
+        "lm_eval": eval_out,
+    })
+    return eval_out
 
 DEFAULT_MODELS = {
     "llama3.1-8b": "meta-llama/Llama-3.1-8B",
     "mistral-7b": "mistralai/Mistral-7B-v0.3",
     "mixtral-8x7b": "mistralai/Mixtral-8x7B-v0.1",
 }
-
-def _has_adapter(run_dir: str) -> bool:
-    """
-    True if run_dir contains a usable adapter payload (LoRA or full model) in run_dir/adapter.
-    For LoRA we expect adapter_config.json and adapter_model.* to exist.
-    """
-    ad = Path(run_dir) / "adapter"
-    if not ad.is_dir():
-        return False
-    # LoRA adapter
-    if (ad / "adapter_config.json").is_file():
-        # adapter weights can be .safetensors or .bin depending on setup
-        if any(ad.glob("adapter_model.*")):
-            return True
-    # Dense save fallback (not "adapter" in PEFT sense, but still a usable checkpoint)
-    if (ad / "pytorch_model.bin").is_file() or any(ad.glob("model*.safetensors")):
-        return True
-    return False
-
-def _find_existing_run_with_adapter(runs_root: str, prefix: str):
-    """
-    Find the newest run directory under runs_root whose basename starts with `prefix`
-    and that contains an adapter. Returns (run_id, run_dir) or (None, None).
-    """
-    root = Path(runs_root)
-    if not root.exists():
-        return None, None
-
-    candidates = []
-    for p in root.iterdir():
-        if not p.is_dir():
-            continue
-        if not p.name.startswith(prefix):
-            continue
-        if _has_adapter(str(p)):
-            try:
-                mtime = p.stat().st_mtime
-            except Exception:
-                mtime = 0.0
-            candidates.append((mtime, p.name, str(p)))
-
-    if not candidates:
-        return None, None
-
-    # Newest by mtime, then by name (run_id contains timestamp so lexicographic is also useful)
-    candidates.sort(key=lambda t: (t[0], t[1]), reverse=True)
-    _, run_id, run_dir = candidates[0]
-    return run_id, run_dir
 
 def main():
     accelerator = Accelerator()
@@ -78,29 +98,26 @@ def main():
     args = ap.parse_args()
 
     model_id = args.model_id or DEFAULT_MODELS[args.model]
-    # If an adapter already exists for this model/task, skip training and go straight to eval.
-    prefix = f"gpu-dense-{args.model}-{args.task}-"
+    prefix = f"gpu-dense-{args.model}-{args.task}"
 
-    # Create/select run_id/run_dir on rank0 only, then broadcast to all ranks
-    # obj_list: [run_id, run_dir, eval_only_flag]
-    obj_list = [None, None, None]
+    # Decide: eval-only or train+eval
+    eval_only = False
+    run_dir = None
+    run_id = None
     if accelerator.is_main_process:
-        existing_run_id, existing_run_dir = _find_existing_run_with_adapter(args.runs_root, prefix)
-        if existing_run_id is not None and existing_run_dir is not None:
-            run_id, run_dir = existing_run_id, existing_run_dir
+        found = _latest_matching_run_dir(args.runs_root, prefix=prefix)
+        if found is not None:
+            run_dir = found
+            run_id = os.path.basename(os.path.abspath(run_dir))
             eval_only = True
-            print(f"[CACHE] Found existing adapter; skipping training. run_id={run_id} run_dir={run_dir}")
-        else:
-            run_id = make_run_id(prefix=f"gpu-dense-{args.model}-{args.task}")
-            run_dir = make_run_dir(args.runs_root, run_id)
-            eval_only = False
-        obj_list = [run_id, run_dir, eval_only]
 
+    # Broadcast decision + run_dir to all ranks
+    obj_list = [run_id, run_dir, eval_only]
     if accelerator.num_processes > 1:
         torch.distributed.broadcast_object_list(obj_list, src=0)
-    run_id, run_dir, eval_only = obj_list[0], obj_list[1], obj_list[2]
-    if run_id is None or run_dir is None or eval_only is None:
-        raise RuntimeError("Failed to broadcast run_id/run_dir from rank0.")
+    run_id, run_dir, eval_only = obj_list
+    if run_id is None or run_dir is None:
+        raise RuntimeError("Failed to determine/broadcast run_id/run_dir from rank0.")
 
     # Optional: override contract deepspeed.enabled at runtime
     # auto => on for mixtral, off otherwise
@@ -132,12 +149,24 @@ def main():
             "notes": args.notes,
         })
 
-    run_result = train_and_eval_week4(
-        model_id=model_id,
-        task=args.task,
-        contract_yaml=resolved_contract_path,
-        run_dir=run_dir,
-    )
+    if eval_only:
+        run_result = {"lm_eval": None}
+        if accelerator.is_main_process:
+            print(f"[EVAL-ONLY] Using existing run_dir={run_dir}")
+            eval_out = _eval_only(
+                model_id=model_id,
+                task=args.task,
+                run_dir=run_dir,
+                contract_fallback=resolved_contract_path,
+            )
+            run_result["lm_eval"] = eval_out
+    else:
+        run_result = train_and_eval_week4(
+            model_id=model_id,
+            task=args.task,
+            contract_yaml=resolved_contract_path,
+            run_dir=run_dir,
+        )
 
     # Append registry row (schema-agnostic)
     row = {
