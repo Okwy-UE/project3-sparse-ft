@@ -15,6 +15,8 @@ DEFAULT_MODELS = {
     "mixtral-8x7b": "mistralai/Mixtral-8x7B-v0.1",
 }
 
+
+
 def main():
     accelerator = Accelerator()
     
@@ -30,17 +32,28 @@ def main():
     args = ap.parse_args()
 
     model_id = args.model_id or DEFAULT_MODELS[args.model]
-    # Create run_id/run_dir on rank0 only, then broadcast to all ranks
-    obj_list = [None, None]
+    # If an adapter already exists for this model/task, skip training and go straight to eval.
+    prefix = f"gpu-dense-{args.model}-{args.task}-"
+
+    # Create/select run_id/run_dir on rank0 only, then broadcast to all ranks
+    # obj_list: [run_id, run_dir, eval_only_flag]
+    obj_list = [None, None, None]
     if accelerator.is_main_process:
-        run_id = make_run_id(prefix=f"gpu-dense-{args.model}-{args.task}")
-        run_dir = make_run_dir(args.runs_root, run_id)
-        obj_list = [run_id, run_dir]
+        existing_run_id, existing_run_dir = _find_existing_run_with_adapter(args.runs_root, prefix)
+        if existing_run_id is not None and existing_run_dir is not None:
+            run_id, run_dir = existing_run_id, existing_run_dir
+            eval_only = True
+            print(f"[CACHE] Found existing adapter; skipping training. run_id={run_id} run_dir={run_dir}")
+        else:
+            run_id = make_run_id(prefix=f"gpu-dense-{args.model}-{args.task}")
+            run_dir = make_run_dir(args.runs_root, run_id)
+            eval_only = False
+        obj_list = [run_id, run_dir, eval_only]
 
     if accelerator.num_processes > 1:
         torch.distributed.broadcast_object_list(obj_list, src=0)
-    run_id, run_dir = obj_list[0], obj_list[1]
-    if run_id is None or run_dir is None:
+    run_id, run_dir, eval_only = obj_list[0], obj_list[1], obj_list[2]
+    if run_id is None or run_dir is None or eval_only is None:
         raise RuntimeError("Failed to broadcast run_id/run_dir from rank0.")
 
     # Optional: override contract deepspeed.enabled at runtime
