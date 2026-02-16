@@ -15,7 +15,53 @@ DEFAULT_MODELS = {
     "mixtral-8x7b": "mistralai/Mixtral-8x7B-v0.1",
 }
 
+def _has_adapter(run_dir: str) -> bool:
+    """
+    True if run_dir contains a usable adapter payload (LoRA or full model) in run_dir/adapter.
+    For LoRA we expect adapter_config.json and adapter_model.* to exist.
+    """
+    ad = Path(run_dir) / "adapter"
+    if not ad.is_dir():
+        return False
+    # LoRA adapter
+    if (ad / "adapter_config.json").is_file():
+        # adapter weights can be .safetensors or .bin depending on setup
+        if any(ad.glob("adapter_model.*")):
+            return True
+    # Dense save fallback (not "adapter" in PEFT sense, but still a usable checkpoint)
+    if (ad / "pytorch_model.bin").is_file() or any(ad.glob("model*.safetensors")):
+        return True
+    return False
 
+def _find_existing_run_with_adapter(runs_root: str, prefix: str):
+    """
+    Find the newest run directory under runs_root whose basename starts with `prefix`
+    and that contains an adapter. Returns (run_id, run_dir) or (None, None).
+    """
+    root = Path(runs_root)
+    if not root.exists():
+        return None, None
+
+    candidates = []
+    for p in root.iterdir():
+        if not p.is_dir():
+            continue
+        if not p.name.startswith(prefix):
+            continue
+        if _has_adapter(str(p)):
+            try:
+                mtime = p.stat().st_mtime
+            except Exception:
+                mtime = 0.0
+            candidates.append((mtime, p.name, str(p)))
+
+    if not candidates:
+        return None, None
+
+    # Newest by mtime, then by name (run_id contains timestamp so lexicographic is also useful)
+    candidates.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    _, run_id, run_dir = candidates[0]
+    return run_id, run_dir
 
 def main():
     accelerator = Accelerator()
