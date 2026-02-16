@@ -8,7 +8,6 @@ import os
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, List
-from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
@@ -80,11 +79,11 @@ def _hard_cuda_cleanup(objs: Dict[str, Any], accelerator=None) -> None:
             except Exception:
                 pass
             # accelerate >= 0.26
-            if hasattr(accelerator, "free_memory"):
-                try:
-                    accelerator.free_memory()
-                except Exception:
-                    pass
+
+            try:
+                accelerator.free_memory()
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -546,7 +545,6 @@ def train_and_eval_week4(
     contract_yaml: str,
     run_dir: str,
     eval_device: str = "cuda:0",
-    eval_only = False
 ) -> Dict[str, Any]:
     contract = _load_contract_yaml(contract_yaml)
     cfg = resolve_week4_config(contract, task)
@@ -556,123 +554,6 @@ def train_and_eval_week4(
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
     write_json(os.path.join(run_dir, "week4_contract_resolved.json"), contract)
-
-    # Adapter location (may already exist if we're skipping training)
-    adapter_dir = os.path.abspath(os.path.join(run_dir, "adapter"))
-
-    def _adapter_present() -> bool:
-        ad = Path(adapter_dir)
-        if not ad.is_dir():
-            return False
-        # LoRA adapter presence
-        if (ad / "adapter_config.json").is_file() and any(ad.glob("adapter_model.*")):
-            return True
-        # Dense checkpoint presence (fallback)
-        if (ad / "pytorch_model.bin").is_file() or any(ad.glob("model*.safetensors")):
-            return True
-        return False
-
-    def _is_lora_adapter() -> bool:
-        ad = Path(adapter_dir)
-        return ad.is_dir() and (ad / "adapter_config.json").is_file()
-
-    # -------------------------
-    # EVAL-ONLY PATH
-    # -------------------------
-    if eval_only:
-        if not _adapter_present():
-            raise RuntimeError(
-                f"eval_only=True but no adapter found at: {adapter_dir}. "
-                "Expected adapter/adapter_config.json + adapter_model.* (LoRA) "
-                "or a saved dense checkpoint under adapter/."
-            )
-
-        # If torch.distributed is initialized, lm-eval-harness may run collectives
-        # that must be matched on all ranks. Since we want eval on rank0 only,
-        # tear down the process group first (on ALL ranks).
-        import torch.distributed as dist
-        if dist.is_available() and dist.is_initialized():
-            dist.barrier()
-            dist.destroy_process_group()
-            print(f"[DIST] destroyed process group on rank={int(os.environ.get('RANK','0'))}")
-
-        rank = int(os.environ.get("RANK", "0"))
-        is_writer = (rank == 0)
-
-        eval_out = {}
-        if cfg.eval_use_lm_eval and is_writer:
-            eval_path = os.path.join(run_dir, "lm_eval.json")
-            eval_device_rank = "cuda:0" if torch.cuda.is_available() else "cpu"
-            if torch.cuda.is_available():
-                torch.cuda.set_device(0)
-
-            # Force single-process env for lm-eval
-            os.environ["WORLD_SIZE"] = "1"
-            os.environ["RANK"] = "0"
-            os.environ["LOCAL_RANK"] = "0"
-
-            peft_path = adapter_dir if _is_lora_adapter() else None
-
-            try:
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
-                    free, total = torch.cuda.mem_get_info()
-                    print(f"[EVAL PRELOAD] free={free/1024**3:.2f} GB total={total/1024**3:.2f} GB")
-                    print(f"[EVAL PRELOAD] allocated={torch.cuda.memory_allocated()/1024**3:.2f} GB reserved={torch.cuda.memory_reserved()/1024**3:.2f} GB")
-
-                eval_out = run_lm_eval_harness(
-                    base_model_id=model_id,
-                    peft_adapter_path=peft_path,
-                    tasks=[cfg.eval_task_name],
-                    out_json_path=eval_path,
-                    batch_size=cfg.eval_batch_size,
-                    device=eval_device_rank,
-                    extra_model_args=None,
-                    write_results=True,
-                )
-            except (torch.OutOfMemoryError, torch.cuda.OutOfMemoryError, RuntimeError) as e:
-                if isinstance(e, RuntimeError) and "out of memory" not in str(e).lower():
-                    raise
-
-                write_json(os.path.join(run_dir, "lm_eval_oom.json"), {
-                    "device_requested": eval_device,
-                    "fallback_device": "cpu",
-                    "error": str(e),
-                })
-
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.ipc_collect()
-
-                eval_out = run_lm_eval_harness(
-                    base_model_id=model_id,
-                    peft_adapter_path=peft_path,
-                    tasks=[cfg.eval_task_name],
-                    out_json_path=eval_path,
-                    batch_size="1" if cfg.eval_batch_size == "auto" else cfg.eval_batch_size,
-                    device="cpu",
-                    extra_model_args={"dtype": "float16"},
-                    write_results=True,
-                )
-
-        run_result = {
-            "model_id": model_id,
-            "task": task,
-            "seq_len": cfg.max_seq_len,
-            "peft_mode": cfg.peft_mode,
-            "micro_batch_final": None,
-            "throughput_points": [],
-            "train_tokens_per_s": None,
-            "train_time_s": None,
-            "loss_last": None,
-            "lm_eval": eval_out,
-            "adapter_dir": adapter_dir,
-        }
-
-        if is_writer:
-            write_json(os.path.join(run_dir, "run_result.json"), run_result)
-        return run_result
 
     # ---- Auto micro-batch
     bench_ctx = _init_bench_context(model_id, cfg, run_dir)
@@ -776,6 +657,7 @@ def train_and_eval_week4(
     train_tok_s = tokens_total / train_s if train_s > 0 else 0.0
 
     # ---- Save adapter (main process only)
+    adapter_dir = os.path.abspath(os.path.join(run_dir, "adapter"))
     if accelerator.is_main_process:
         os.makedirs(adapter_dir, exist_ok=True)
         unwrapped = accelerator.unwrap_model(model)
@@ -863,14 +745,11 @@ def train_and_eval_week4(
         print(f"[POST CLEANUP] free={free/1024**3:.2f} GB total={total/1024**3:.2f} GB")
         print(f"[POST CLEANUP] allocated={torch.cuda.memory_allocated()/1024**3:.2f} GB reserved={torch.cuda.memory_reserved()/1024**3:.2f} GB")
 
-    # ---- IMPORTANT: lm-eval uses accelerate.gather; if torch.distributed is initialized
-    # it will run collectives that MUST be matched on all ranks. Since we want eval on
-    # rank0 only, tear down the process group first (on ALL ranks).
-    import torch.distributed as dist
-    if dist.is_available() and dist.is_initialized():
-        dist.barrier()
-        dist.destroy_process_group()
-        print(f"[DIST] destroyed process group on rank={int(os.environ.get('RANK','0'))}")
+    if accelerator is not None:
+        try:
+            accelerator.wait_for_everyone()
+        except Exception:
+            pass
     
     # ---- Eval (lm-eval-harness)
     eval_out = {}
@@ -879,10 +758,6 @@ def train_and_eval_week4(
         eval_device_rank = "cuda:0" if torch.cuda.is_available() else "cpu"
         if torch.cuda.is_available():
             torch.cuda.set_device(0)
-
-        os.environ["WORLD_SIZE"] = "1"
-        os.environ["RANK"] = "0"
-        os.environ["LOCAL_RANK"] = "0"
 
         try:
             torch.cuda.synchronize()
