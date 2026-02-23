@@ -68,7 +68,13 @@ DEFAULT_CACHE_DIR = os.environ.get("HF_HUB_CACHE", os.path.join(_hf_home, "hub")
 # Helper Functions
 # ============================================================================
 
-def load_model_from_hf(model_name: str, device: str = "cpu", use_alternative: bool = False, local_files_only: bool = False) -> torch.nn.Module:
+def load_model_from_hf(
+    model_name: str,
+    device: str = "cpu",
+    use_alternative: bool = False,
+    local_files_only: bool = False,
+    mixtral_4bit: bool = False,
+) -> torch.nn.Module:
     """
     Load a model from Hugging Face (or local cache).
     
@@ -113,13 +119,33 @@ def load_model_from_hf(model_name: str, device: str = "cpu", use_alternative: bo
             # Use reduced precision on GPU to lower memory pressure.
             model_dtype = torch.bfloat16 if str(device).startswith("cuda") else torch.float32
 
-            model = AutoModelForCausalLM.from_pretrained(
-                hf_name,
+            load_kwargs = dict(
                 dtype=model_dtype,
                 device_map=resolved_device_map,
                 trust_remote_code=True,
                 cache_dir=cache_dir,
                 local_files_only=False,
+            )
+
+            if mixtral_4bit and model_name == "mixtral" and str(device).startswith("cuda"):
+                try:
+                    from transformers import BitsAndBytesConfig
+                except Exception as exc:
+                    raise RuntimeError(
+                        "Mixtral 4-bit requested, but bitsandbytes support is unavailable. "
+                        "Install bitsandbytes and ensure CUDA compatibility."
+                    ) from exc
+                print("Using 4-bit quantization for Mixtral (bitsandbytes).")
+                load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                )
+
+            model = AutoModelForCausalLM.from_pretrained(
+                hf_name,
+                **load_kwargs,
             )
             
             print(f"✓ Model loaded: {model.__class__.__name__}")
@@ -311,6 +337,7 @@ def process_model_task_pair(
     use_alternatives: bool = False,
     local_only: bool = False,
     global_pruning: bool = False,
+    mixtral_4bit: bool = True,
 ) -> bool:
     """
     Process a single model-task pair for all sparsity levels.
@@ -328,7 +355,8 @@ def process_model_task_pair(
             model_name, 
             device=device, 
             use_alternative=use_alternatives,
-            local_files_only=local_only
+            local_files_only=local_only,
+            mixtral_4bit=mixtral_4bit,
         )
         
         # Process each sparsity level
@@ -458,6 +486,11 @@ def main():
         action="store_true",
         help="Use global pruning across all layers (higher memory use)",
     )
+    parser.add_argument(
+        "--mixtral-4bit",
+        action="store_true",
+        help="Load Mixtral in 4-bit (bitsandbytes) to reduce GPU memory",
+    )
     
     args = parser.parse_args()
     
@@ -481,6 +514,7 @@ def main():
     print(f"Output: {output_dir}")
     print(f"Cache mode: {'local only' if args.local_only else 'allow download'}")
     print(f"Pruning scope: {'global' if args.global_pruning else 'layer-wise'}")
+    print(f"Mixtral 4-bit: {'enabled' if args.mixtral_4bit else 'disabled'}")
     print("="*80)
     
     if args.dry_run:
@@ -516,6 +550,7 @@ def main():
                 use_alternatives=args.use_alternatives,
                 local_only=args.local_only,
                 global_pruning=args.global_pruning,
+                mixtral_4bit=args.mixtral_4bit,
             )
             
             results[f"{model_name}_{task_name}"] = success

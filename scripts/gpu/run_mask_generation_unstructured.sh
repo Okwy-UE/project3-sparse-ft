@@ -81,6 +81,7 @@ GPU_ID="${GPU_ID:-0}"
 NO_PLOT=""
 FORCE_CPU=""
 ALLOW_DOWNLOAD=""
+MIXTRAL_4BIT=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -105,6 +106,10 @@ while [[ $# -gt 0 ]]; do
             ALLOW_DOWNLOAD="--allow-download"
             shift
             ;;
+        --mixtral-4bit)
+            MIXTRAL_4BIT="--mixtral-4bit"
+            shift
+            ;;
         --help)
             echo "Usage: $0 [options]"
             echo ""
@@ -114,6 +119,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --cpu                Force CPU-only execution"
             echo "  --gpu-id <id>        Single GPU index to use (default: 0)"
             echo "  --allow-download     Allow downloading models from HuggingFace (default: use cached only)"
+            echo "  --mixtral-4bit       Load Mixtral in 4-bit to reduce GPU memory"
             echo "  --help               Show this help message"
             exit 0
             ;;
@@ -168,6 +174,7 @@ python3 "$SCRIPT_DIR/generate_all_masks_unstructured.py" \
     $FORCE_CPU \
     $NO_PLOT \
     $ALLOW_DOWNLOAD \
+    $MIXTRAL_4BIT \
     $DRY_RUN
 
 EXIT_CODE=$?
