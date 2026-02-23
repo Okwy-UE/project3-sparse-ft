@@ -248,8 +248,7 @@ def merge_all_lora_weights(
 def validate_sparsity_preserved(
     model: nn.Module,
     original_masks: Dict[str, torch.Tensor],
-    tolerance: float = 1e-6,
-) -> Tuple[bool, Dict[str, any]]:
+    tolerance: float = 1e-6):
     """
     Validate that sparsity is preserved after LoRA merge.
     

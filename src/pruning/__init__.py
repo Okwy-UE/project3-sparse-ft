@@ -27,7 +27,7 @@ from .importance import (
     taylor_importance
 )
 from .sparse_lora import (
-    SparseLoRA,
+    SparseLoRALayer,
     SparseLoRAConfig,
     apply_sparse_lora
 )
@@ -45,7 +45,7 @@ __all__ = [
     'magnitude_importance',
     'gradient_importance',
     'taylor_importance',
-    'SparseLoRA',
+    'SparseLoRALayer',
     'SparseLoRAConfig',
     'apply_sparse_lora',
 ]

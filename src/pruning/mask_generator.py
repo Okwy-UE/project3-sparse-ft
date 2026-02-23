@@ -122,7 +122,28 @@ def compute_unstructured_mask(
     Returns:
         Dictionary of binary masks (1 = keep, 0 = prune)
     """
-    # Compute importance scores
+    masks = {}
+
+    # Fast low-memory path for the common magnitude + layer-wise case.
+    # This avoids materializing a full-model importance dictionary.
+    if not global_pruning and importance_metric.lower() == "magnitude":
+        for name, module in model.named_modules():
+            if isinstance(module, (nn.Linear, nn.Conv1d, nn.Conv2d)):
+                if hasattr(module, "weight") and module.weight is not None:
+                    # Move one layer at a time to CPU for thresholding to cap peak memory.
+                    importance = module.weight.detach().abs().float().cpu()
+                    k = int(sparsity * importance.numel())
+                    if k >= importance.numel():
+                        mask = torch.zeros_like(importance, dtype=torch.bool)
+                    elif k == 0:
+                        mask = torch.ones_like(importance, dtype=torch.bool)
+                    else:
+                        threshold = torch.kthvalue(importance.flatten(), k + 1).values
+                        mask = importance > threshold
+                    masks[name] = mask
+        return masks
+
+    # Fallback path for global pruning and gradient/taylor metrics.
     importance_dict = compute_layer_importance(
         model,
         dataloader=dataloader,
@@ -130,27 +151,25 @@ def compute_unstructured_mask(
         method=importance_metric,
         device=device,
     )
-    
-    masks = {}
-    
+
     if global_pruning:
         # Global pruning: compute single threshold across all layers
         threshold = compute_global_threshold(importance_dict, sparsity)
         
         for name, importance in importance_dict.items():
-            mask = (importance > threshold).float()
+            mask = importance > threshold
             masks[name] = mask
     else:
         # Layer-wise pruning: each layer gets same sparsity
         for name, importance in importance_dict.items():
             k = int(sparsity * importance.numel())
             if k >= importance.numel():
-                mask = torch.zeros_like(importance)
+                mask = torch.zeros_like(importance, dtype=torch.bool)
             elif k == 0:
-                mask = torch.ones_like(importance)
+                mask = torch.ones_like(importance, dtype=torch.bool)
             else:
                 threshold = torch.kthvalue(importance.flatten(), k + 1).values
-                mask = (importance > threshold).float()
+                mask = importance > threshold
             masks[name] = mask
     
     return masks
@@ -206,16 +225,16 @@ def compute_structured_mask(
         num_keep = max(1, num_keep)  # Keep at least one channel
         
         if num_keep >= num_channels:
-            mask = torch.ones_like(importance)
+            mask = torch.ones_like(importance, dtype=torch.bool)
         else:
             _, indices = torch.topk(channel_importance, num_keep)
             
             # Create mask
-            mask = torch.zeros_like(importance)
+            mask = torch.zeros_like(importance, dtype=torch.bool)
             if dim == 0:
-                mask[indices] = 1.0
+                mask[indices] = True
             else:
-                mask[:, indices] = 1.0
+                mask[:, indices] = True
         
         masks[name] = mask
     
@@ -249,7 +268,7 @@ def compute_random_mask(
             if hasattr(module, 'weight') and module.weight is not None:
                 weight = module.weight
                 mask = torch.rand_like(weight) > sparsity
-                masks[name] = mask.float()
+                masks[name] = mask
     
     return masks
 
