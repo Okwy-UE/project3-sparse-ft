@@ -65,7 +65,7 @@ project3-sparse-ft/
 
 ```bash
 # SSH to Cerebras
-ssh ebereuwadoka@cerebras.alcf.anl.gov
+ssh XXX@cerebras.alcf.anl.gov
 ssh cer-usn-01
 
 # Activate Cerebras environment
