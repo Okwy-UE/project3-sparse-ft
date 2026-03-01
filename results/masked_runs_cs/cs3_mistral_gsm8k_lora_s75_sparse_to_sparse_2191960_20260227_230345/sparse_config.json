@@ -1,0 +1,7 @@
+{
+  "model": "mistral",
+  "task": "gsm8k",
+  "sparsity": 75,
+  "mode": "sparse_to_sparse",
+  "run_id": "cs3_mistral_gsm8k_lora_s75_sparse_to_sparse_2191960_20260227_230345"
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "status": "ok",
+    "status_reason": "eval_complete",
+    "attempts": 1,
+    "model": "mixtral",
+    "task": "boolq",
+    "sparsity": 25,
+    "mode": "sparse_to_dense",
+    "run_id": "cs3_mixtral_boolq_lora_s25_sparse_to_dense_2191960_20260228_192033",
+    "run_dir": "/home/ebereuwadoka/project3-sparse-ft/results/masked_runs_cs/cs3_mixtral_boolq_lora_s25_sparse_to_dense_2191960_20260228_192033",
+    "log_path": "/home/ebereuwadoka/project3-sparse-ft/results/masked_runs_cs/cs3_mixtral_boolq_lora_s25_sparse_to_dense_2191960_20260228_192033/train.log"
+  },
+  {
+    "status": "fail_rc=122",
+    "status_reason": "disk_quota_exceeded",
+    "attempts": 2,
+    "model": "mixtral",
+    "task": "boolq",
+    "sparsity": 25,
+    "mode": "sparse_to_sparse",
+    "run_id": "cs3_mixtral_boolq_lora_s25_sparse_to_sparse_2191960_20260301_073559",
+    "run_dir": "/home/ebereuwadoka/project3-sparse-ft/results/masked_runs_cs/cs3_mixtral_boolq_lora_s25_sparse_to_sparse_2191960_20260301_073559",
+    "log_path": "/home/ebereuwadoka/project3-sparse-ft/results/masked_runs_cs/cs3_mixtral_boolq_lora_s25_sparse_to_sparse_2191960_20260301_073559/train.log"
+  }
+]

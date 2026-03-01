@@ -1,0 +1,7 @@
+{
+  "model": "llama3",
+  "task": "boolq",
+  "sparsity": 75,
+  "mode": "sparse_to_sparse",
+  "run_id": "cs3_llama3_boolq_lora_s75_sparse_to_sparse_2191960_20260225_225602"
+}

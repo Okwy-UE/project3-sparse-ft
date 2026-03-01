@@ -199,7 +199,19 @@ def load_mask(
     load_path = Path(load_path)
     
     if format == "pt":
-        data = torch.load(load_path, map_location='cpu')
+        # Handle NumPy 2.x → 1.x pickle incompatibility:
+        # Files saved with numpy>=2.0 reference ``numpy._core`` which
+        # does not exist in numpy<2.0.  Alias it so unpickling succeeds.
+        import numpy as _np
+        if not hasattr(_np, "_core"):
+            import numpy.core as _nc
+            _np._core = _nc
+            # Also alias the sub-module that torch's unpickler looks for
+            import sys as _sys
+            _sys.modules.setdefault("numpy._core", _nc)
+            _sys.modules.setdefault("numpy._core.multiarray", getattr(_nc, "multiarray", _nc))
+
+        data = torch.load(load_path, map_location='cpu', weights_only=False)
         masks = data['masks']
         metadata = data.get('metadata', {})
     

@@ -1,5 +1,10 @@
 """
 Wrapper for sparse models compatible with Cerebras training.
+
+Provides:
+  - SparseModelWrapper  : wraps a base model + masks, applies masks on forward
+  - prepare_sparse_model: high-level helper for the three modes (inference,
+    sparse_to_dense, sparse_to_sparse)
 """
 
 import torch
@@ -8,7 +13,6 @@ from typing import Dict, Optional, Literal
 from pathlib import Path
 import sys
 
-# Add parent to path to import pruning modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pruning.mask_ops import apply_mask, load_mask
@@ -16,17 +20,22 @@ from pruning.sparse_lora import (
     SparseLoRAConfig,
     apply_sparse_lora,
     merge_all_lora_weights,
-    validate_sparsity_preserved
+    validate_sparsity_preserved,
 )
 
 
 class SparseModelWrapper(nn.Module):
     """
-    Wrapper that applies sparsity masks to a model.
-    
-    Compatible with Cerebras training pipeline.
+    Wraps a base model with sparsity masks.
+
+    On each forward pass (if ``apply_on_forward`` is True) the masks are
+    re-applied so that the masked weights stay exactly zero.  This is the
+    correct behaviour for sparse-to-sparse training.
+
+    For sparse-to-dense the base weights are frozen and sparse already;
+    no per-forward re-masking is necessary, so set ``apply_on_forward=False``.
     """
-    
+
     def __init__(
         self,
         base_model: nn.Module,
@@ -34,57 +43,37 @@ class SparseModelWrapper(nn.Module):
         mask_path: Optional[str] = None,
         apply_on_forward: bool = True,
     ):
-        """
-        Initialize sparse model wrapper.
-        
-        Args:
-            base_model: Base model to wrap
-            masks: Dictionary of sparsity masks
-            mask_path: Path to load masks from (if masks not provided)
-            apply_on_forward: If True, apply masks on every forward pass
-        """
         super().__init__()
-        
         self.base_model = base_model
         self.apply_on_forward = apply_on_forward
-        
-        # Load or set masks
+
         if masks is None and mask_path is not None:
             masks, _ = load_mask(mask_path)
-        
+
         self.masks = masks or {}
-        
-        # Register masks as buffers
         self._register_masks()
-        
-        # Apply masks initially
+
         if self.masks:
             self.apply_masks()
-    
+
     def _register_masks(self):
-        """Register masks as buffers so they move with the model."""
         for name, mask in self.masks.items():
-            # Replace dots with underscores for buffer names
-            buffer_name = f"mask_{name.replace('.', '_')}"
-            self.register_buffer(buffer_name, mask)
-    
+            buf_name = f"mask_{name.replace('.', '_')}"
+            self.register_buffer(buf_name, mask)
+
     def apply_masks(self):
-        """Apply masks to model weights."""
         for name, module in self.base_model.named_modules():
             if name in self.masks:
-                if hasattr(module, 'weight') and module.weight is not None:
-                    mask = self.masks[name].to(module.weight.device)
-                    module.weight.data = apply_mask(module.weight.data, mask)
-    
+                if hasattr(module, "weight") and module.weight is not None:
+                    m = self.masks[name].to(module.weight.device)
+                    module.weight.data = apply_mask(module.weight.data, m)
+
     def forward(self, *args, **kwargs):
-        """Forward pass with optional mask application."""
         if self.apply_on_forward and self.masks:
             self.apply_masks()
-        
         return self.base_model(*args, **kwargs)
-    
+
     def get_sparsity_stats(self) -> Dict:
-        """Get current sparsity statistics."""
         from pruning.mask_ops import compute_sparsity_stats
         return compute_sparsity_stats(self.masks, self.base_model)
 
@@ -96,49 +85,44 @@ def prepare_sparse_model(
     mode: Literal["inference", "sparse_to_dense", "sparse_to_sparse"] = "sparse_to_dense",
 ) -> nn.Module:
     """
-    Prepare a model for sparse fine-tuning.
-    
+    Prepare a model for sparse (LoRA) fine-tuning.
+
     Args:
-        model: Base model
-        mask_path: Path to sparsity masks
-        lora_config: Configuration for Sparse LoRA
-        mode: Training mode
-            - "inference": Just apply masks, no training
-            - "sparse_to_dense": Start sparse, train dense LoRA
-            - "sparse_to_sparse": Maintain sparsity during training
-    
+        model:      Base model.
+        mask_path:  Path to the ``.pt`` mask file.
+        lora_config: Sparse LoRA config (if None, uses defaults).
+        mode:
+            ``inference``       – just mask the weights, no training.
+            ``sparse_to_dense`` – mask weights + apply dense LoRA.
+            ``sparse_to_sparse``– mask weights + apply masked LoRA (delta ⊙ M).
+
     Returns:
-        Prepared model
+        Prepared model (may be a SparseModelWrapper or LoRA-wrapped).
     """
-    # Load masks
     masks, metadata = load_mask(mask_path)
-    print(f"Loaded masks from {mask_path}")
-    print(f"Mask metadata: {metadata}")
-    
+    print(f"[prepare_sparse_model] Loaded {len(masks)} masks from {mask_path}")
+    sparsity = metadata.get("sparsity", metadata.get("stats", {}).get("global", {}).get("sparsity", "?"))
+    print(f"[prepare_sparse_model] Global sparsity: {sparsity}")
+
     if mode == "inference":
-        # Just wrap with masks
-        model = SparseModelWrapper(model, masks=masks, apply_on_forward=True)
-    
-    elif mode in ["sparse_to_dense", "sparse_to_sparse"]:
-        # Apply Sparse LoRA
-        if lora_config is None:
-            lora_config = SparseLoRAConfig()
-        
-        lora_config.sparsity_mode = mode
-        lora_config.maintain_sparsity = (mode == "sparse_to_sparse")
-        
-        # Apply masks first
-        for name, module in model.named_modules():
-            if name in masks:
-                if hasattr(module, 'weight') and module.weight is not None:
-                    mask = masks[name].to(module.weight.device)
-                    module.weight.data = apply_mask(module.weight.data, mask)
-        
-        # Apply LoRA
-        model = apply_sparse_lora(model, masks, lora_config)
-        print(f"Applied Sparse LoRA with mode: {mode}")
-    
-    else:
+        return SparseModelWrapper(model, masks=masks, apply_on_forward=True)
+
+    if mode not in ("sparse_to_dense", "sparse_to_sparse"):
         raise ValueError(f"Unknown mode: {mode}")
-    
+
+    if lora_config is None:
+        lora_config = SparseLoRAConfig()
+
+    lora_config.sparsity_mode = mode
+    lora_config.maintain_sparsity = mode == "sparse_to_sparse"
+    lora_config.masked_lora_update = mode == "sparse_to_sparse"
+
+    for name, module in model.named_modules():
+        if name in masks:
+            if hasattr(module, "weight") and module.weight is not None:
+                m = masks[name].to(module.weight.device)
+                module.weight.data = apply_mask(module.weight.data, m)
+
+    model = apply_sparse_lora(model, masks, lora_config)
+    print(f"[prepare_sparse_model] Applied Sparse LoRA ({mode})")
     return model

@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "dense_baseline_nonzero_in_masked_coords": 96,
+  "masked_update_nonzero_in_masked_coords": 0,
+  "masked_update_nonzero_in_unmasked_coords": 96,
+  "merge_violations_in_masked_coords": 0,
+  "expected_zero_count_in_masked_coords": 96,
+  "observed_zero_count_in_masked_coords": 96,
+  "mask_checksum_before": "0a1ee7c480103860d0cb624f3e04df7f",
+  "mask_checksum_after": "0a1ee7c480103860d0cb624f3e04df7f",
+  "seed": 7
+}

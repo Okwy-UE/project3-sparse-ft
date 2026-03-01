@@ -73,7 +73,6 @@ def parse_run_dir(run_dir: Path) -> Dict:
     
     return metadata
 
-
 def parse_train_log(log_path: Path) -> Dict:
     """
     Parse Cerebras training log for metrics.
@@ -117,6 +116,7 @@ def parse_train_log(log_path: Path) -> Dict:
             pass
     
     return metrics
+
 
 
 def collect_results(results_dir: Path) -> pd.DataFrame:
@@ -190,6 +190,72 @@ def generate_summary_tables(df: pd.DataFrame, output_dir: Path):
         sparsity_perf_path = output_dir / "sparsity_vs_performance.csv"
         sparsity_perf.to_csv(sparsity_perf_path, index=False)
         print(f"✓ Sparsity vs performance saved to: {sparsity_perf_path}")
+
+
+def load_bench_csvs(bench_csv_glob: str) -> pd.DataFrame:
+    import glob as _glob
+    csv_files = sorted(_glob.glob(bench_csv_glob))
+    if not csv_files:
+        return pd.DataFrame()
+    frames = []
+    for p in csv_files:
+        try:
+            frames.append(pd.read_csv(p))
+        except Exception as e:
+            print(f"Skipping bench CSV {p}: {e}")
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
+def generate_bench_outputs(bench_df: pd.DataFrame, output_dir: Path, do_plot: bool):
+    if bench_df.empty:
+        print("No benchmark CSV data found.")
+        return
+
+    for col in ["batch_size", "sparsity", "global_rate_samples_s"]:
+        if col in bench_df.columns:
+            bench_df[col] = pd.to_numeric(bench_df[col], errors="coerce")
+    bench_df = bench_df.dropna(subset=["batch_size", "sparsity", "global_rate_samples_s"])
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    bench_out = output_dir / "throughput_vs_batch_sparse.csv"
+    bench_df.to_csv(bench_out, index=False)
+    print(f"✓ Throughput bench dataset saved to: {bench_out}")
+
+    grouped = (
+        bench_df
+        .groupby(["model", "task", "sparsity", "batch_size"], as_index=False)["global_rate_samples_s"]
+        .mean()
+    )
+    grouped_out = output_dir / "throughput_vs_batch_grouped.csv"
+    grouped.to_csv(grouped_out, index=False)
+    print(f"✓ Grouped throughput dataset saved to: {grouped_out}")
+
+    if not do_plot:
+        return
+
+    if grouped.empty:
+        return
+
+    for (model, task), subdf in grouped.groupby(["model", "task"]):
+        plt.figure(figsize=(10, 6))
+        for sparsity, ss in subdf.groupby("sparsity"):
+            plt.plot(
+                ss["batch_size"],
+                ss["global_rate_samples_s"],
+                marker="o",
+                label=f"s{sparsity}",
+            )
+        plt.xlabel("Batch size")
+        plt.ylabel("Throughput (samples/sec)")
+        plt.title(f"CS-3 Throughput vs Batch Size ({model}, {task})")
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        plot_path = output_dir / f"throughput_vs_batch_{model}_{task}.png"
+        plt.savefig(plot_path, dpi=150, bbox_inches="tight")
+        plt.close()
+        print(f"✓ Plot saved to: {plot_path}")
 
 
 def plot_results(df: pd.DataFrame, output_dir: Path):

@@ -1,0 +1,7 @@
+{
+  "model": "mixtral",
+  "task": "boolq",
+  "sparsity": 25,
+  "mode": "sparse_to_sparse",
+  "run_id": "cs3_mixtral_boolq_lora_s25_sparse_to_sparse_2191960_20260301_073559"
+}

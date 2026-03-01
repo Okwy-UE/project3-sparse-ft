@@ -1,0 +1,7 @@
+{
+  "model": "llama3",
+  "task": "hellaswag",
+  "sparsity": 75,
+  "mode": "sparse_to_dense",
+  "run_id": "cs3_llama3_hellaswag_lora_s75_sparse_to_dense_2191960_20260225_094450"
+}
