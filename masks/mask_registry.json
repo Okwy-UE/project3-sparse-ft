@@ -1,0 +1,20 @@
+{
+  "created_at": "2026-02-24T14:06:28.344867",
+  "method": "unstructured",
+  "importance": "magnitude",
+  "sparsities": [
+    0.25,
+    0.5,
+    0.75
+  ],
+  "models": [
+    "mixtral"
+  ],
+  "tasks": [
+    "boolq"
+  ],
+  "results": {
+    "mixtral_boolq": true
+  },
+  "output_dir": "masks"
+}
