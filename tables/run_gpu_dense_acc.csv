@@ -1,3 +1,10 @@
-run_id,method,model,task,timestamp,eval_task,result_file,alias,acc_none,acc_stderr_none,acc_norm_none,acc_norm_stderr_none,exact_match_strict_match,exact_match_stderr_strict_match,exact_match_flexible_extract,exact_match_stderr_flexible_extract,run_dir
-gpu-dense-llama3.1-8b-gsm8k-20260205-180151-845210,dense,llama3.1-8b,gsm8k,20260205-180151-845210,gsm8k,run_result.json,gsm8k,,,,,0.4988627748294162,0.013772449096346841,0.5018953752843063,0.013772385765569753,results/runs/gpu-dense-llama3.1-8b-gsm8k-20260205-180151-845210
-gpu-dense-llama3.1-8b-hellaswag-20260206-091806-1077903,dense,llama3.1-8b,hellaswag,20260206-091806-1077903,hellaswag,run_result.json,hellaswag,0.5946026687910775,0.004899653704032859,0.7712607050388369,0.004191625831229938,,,,,results/runs/gpu-dense-llama3.1-8b-hellaswag-20260206-091806-1077903
+Model Name,Task Name,Sparsity Percentage,Training Mode,Run Timestamp,Run Status,Evaluation Accuracy,Evaluation Language Model Perplexity,Observed Batch Size,Observed Training Throughput at Observed Batch Size (Samples Per Second),Run Directory
+llama3,boolq,0,dense,20260215-160246-2172527,success eval,0.5804281345565749,,4,1.04,results/runs/gpu-dense-llama3.1-8b-boolq-20260215-160246-2172527
+llama3,boolq,0,dense,20260226-163228-663710,missing eval,,,4,0.41,results/runs/gpu-dense-llama3.1-8b-boolq-20260226-163228-663710
+llama3,gsm8k,0,dense,20260205-180151-845210,success eval,0.4988627748294162,,4,1.34,results/runs/gpu-dense-llama3.1-8b-gsm8k-20260205-180151-845210
+llama3,hellaswag,0,dense,20260206-091806-1077903,success eval,0.5946026687910775,,4,1.33,results/runs/gpu-dense-llama3.1-8b-hellaswag-20260206-091806-1077903
+mistral,boolq,0,dense,20260216-072054-2043935,success eval,0.8122324159021407,,16,1.1,results/runs/gpu-dense-mistral-7b-boolq-20260216-072054-2043935
+mistral,gsm8k,0,dense,20260216-110404-3151546,success eval,0.3297952994692949,,16,1.09,results/runs/gpu-dense-mistral-7b-gsm8k-20260216-110404-3151546
+mistral,hellaswag,0,dense,20260216-085223-2567242,success eval,0.5467038438558056,,16,1.1,results/runs/gpu-dense-mistral-7b-hellaswag-20260216-085223-2567242
+mixtral,boolq,0,dense,20260224-123351-2497214,blocked,,,,,results/runs/gpu-dense-mixtral-8x7b-boolq-20260224-123351-2497214
+mixtral,boolq,0,dense,20260224-130513-2661506,blocked,,,,,results/runs/gpu-dense-mixtral-8x7b-boolq-20260224-130513-2661506
