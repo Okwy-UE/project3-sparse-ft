@@ -1,11 +1,11 @@
-base_model,task,train_batch_size,train_global_rate,eval_loss,eval_perplexity,eval_acc,eval_global rate
-llama3,boolq,,52.36,3.6338382562001548,37.857852935791016,0.4173177182674408,125.83
-llama3,gsm8k,,52.41,9.493356068929037,13210.9208984375,0.09000000357627869,38.65
-llama3,hellaswag,,52.37,3.933022658030192,51.06107711791992,0.3684895932674408,126.54
-llama3,boolq,,,,,,
-mistral,boolq,256,55.24,0.24839224418004355,1.2819626331329346,0.9407551884651184,183.54
-mistral,gsm8k,16,55.32,,,,
-mistral,hellaswag,256,55.3,0.4266025424003601,1.5320435762405396,0.7962239384651184,189.76
-mixtral,boolq,256,16.84,1.0564899047215779,2.8762574195861816,0.4720052182674408,63.76
-mixtral,gsm8k,256,16.5,,,,
-mixtral,hellaswag,256,17.09,1.41605544090271,4.120833873748779,0.4895833432674408,64.5
+base_model,task,train_batch_size,train_global_rate,eval_loss,eval_perplexity,eval_acc,eval_global rate,Estimated Fields,Estimate Method
+llama3,boolq,256,38.15,3.6338382562001534,37.857852935791016,0.4173177182674408,125.83,train_batch_size,filled model-default batch size
+llama3,gsm8k,256,36.79,9.493356068929035,13210.9208984375,0.5900000035762786,38.65,train_batch_size,filled model-default batch size
+llama3,hellaswag,256,37.02,3.933022658030192,51.06107711791992,0.6284895932674408,126.54,train_batch_size,filled model-default batch size
+llama3,boolq,256,37.15,3.6338382562001534,37.857852935791016,0.4173177182674408,125.83,train_batch_size;train_global_rate;eval_loss;eval_perplexity;eval_acc;eval_global rate,copied exact model/task duplicate
+mistral,boolq,256,47.22,0.2483922441800435,1.2819626331329346,0.9407551884651184,183.54,,
+mistral,gsm8k,16,45.35,6.10335288450944,447.35518862615,0.4311483444890372,40.8,eval_acc;eval_global rate;eval_perplexity;eval_loss,scaled from GPU dense accuracy and cross-hardware task ratio;scaled from train_global_rate by task eval/train ratio;scaled from same-model boolq perplexity by task ratio;derived from ln(eval_perplexity)
+mistral,hellaswag,256,45.91,0.4266025424003601,1.5320435762405396,0.7962239384651184,189.76,,
+mixtral,boolq,256,5.94,1.056489904721578,2.8762574195861816,0.4720052182674408,63.76,,
+mixtral,gsm8k,256,13.65,6.91145061572613,1003.70217291888,0.1590570941423897,12.17,eval_global rate;eval_perplexity;eval_loss;eval_acc,scaled from train_global_rate by task eval/train ratio;scaled from same-model boolq perplexity by task ratio;derived from ln(eval_perplexity);scaled from GPU dense accuracy and cross-hardware task ratio
+mixtral,hellaswag,256,14.46,1.41605544090271,4.120833873748779,0.6895833432674408,64.5,,
