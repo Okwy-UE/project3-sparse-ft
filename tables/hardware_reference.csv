@@ -1,0 +1,3 @@
+Device,Processor,On-device memory,Compute summary,Core / compute units,Memory bandwidth
+Cerebras CS-3,Wafer-Scale Engine 3 (WSE-3),44 GB SRAM,"~125 PFLOPS AI compute (sparse, vendor-cited)","~900,000 AI-optimized cores",~21 PB/s on-wafer bandwidth
+NVIDIA A100 40 GB,Ampere GA100,40 GB HBM2,Up to ~312 TFLOPS Tensor Core (FP16/BF16 with sparsity),"6912 CUDA cores, 432 Tensor Cores",Up to ~1.6 TB/s
